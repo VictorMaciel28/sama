@@ -91,6 +91,24 @@ export async function GET(request: Request) {
             fone: true,
           },
         },
+        ...(motoristaId
+          ? {
+              envios: {
+                where: { motorista_id: motoristaId },
+                select: {
+                  foto_path: true,
+                  foto_name: true,
+                  foto_data: true,
+                  foto_coordenada: true,
+                  assinatura_path: true,
+                  assinatura_name: true,
+                  assinatura_data: true,
+                  assinatura_coordenada: true,
+                },
+                take: 1,
+              },
+            }
+          : {}),
       },
     });
 
@@ -123,6 +141,21 @@ export async function GET(request: Request) {
         order.tiny_id != null ? historyByKey.get(`${order.tiny_id}:${order.status}`) ?? null : null;
       const endereco = formatEndereco(order.endereco_entrega, order.cliente_rel);
       const clienteTelefone = order.cliente_rel?.celular || order.cliente_rel?.fone || null;
+      const envio =
+        motoristaId && 'envios' in order && Array.isArray((order as { envios?: unknown }).envios)
+          ? (order as {
+              envios: Array<{
+                foto_path: string | null;
+                foto_name: string | null;
+                foto_data: Date | null;
+                foto_coordenada: string | null;
+                assinatura_path: string | null;
+                assinatura_name: string | null;
+                assinatura_data: Date | null;
+                assinatura_coordenada: string | null;
+              }>;
+            }).envios[0]
+          : undefined;
       return {
         numero: order.numero,
         cliente: order.cliente,
@@ -134,6 +167,14 @@ export async function GET(request: Request) {
         valor: Number(order.total),
         status: order.status,
         status_em: statusEm,
+        entrega_foto_path: envio?.foto_path ?? null,
+        entrega_foto_name: envio?.foto_name ?? null,
+        entrega_foto_data: envio?.foto_data ? envio.foto_data.toISOString() : null,
+        entrega_foto_coordenada: envio?.foto_coordenada ?? null,
+        assinatura_path: envio?.assinatura_path ?? null,
+        assinatura_name: envio?.assinatura_name ?? null,
+        assinatura_data: envio?.assinatura_data ? envio.assinatura_data.toISOString() : null,
+        assinatura_coordenada: envio?.assinatura_coordenada ?? null,
       };
     });
 

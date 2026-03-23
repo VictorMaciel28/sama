@@ -41,6 +41,10 @@ export type LatLng = { lat: number; lng: number };
  * `optimizeWaypointOrder` (padrão `true`): o Google pode reordenar **somente os intermediários**
  * no modo `lastStop`, ou **todas** as paradas no modo `returnToOrigin`, para reduzir tempo/distância.
  * Use `false` se a ordem da lista for obrigatória (ex.: prioridade comercial).
+ *
+ * `routingPreference` (opcional): para carro/moto, o padrão é `TRAFFIC_AWARE_OPTIMAL` quando não há
+ * otimização de paradas. **Importante:** a Routes API **não permite** `optimizeWaypointOrder: true` com
+ * `TRAFFIC_AWARE_OPTIMAL` — nesse caso o servidor usa `TRAFFIC_AWARE` automaticamente.
  */
 type RoutesBody = {
   origin?: LatLng;
@@ -50,7 +54,21 @@ type RoutesBody = {
   optimizeWaypointOrder?: boolean;
   /** Padrão: lastStop */
   destinationMode?: 'lastStop' | 'returnToOrigin';
+  routingPreference?: 'TRAFFIC_UNAWARE' | 'TRAFFIC_AWARE' | 'TRAFFIC_AWARE_OPTIMAL';
 };
+
+const ROUTING_PREFS = new Set<RoutesBody['routingPreference']>([
+  'TRAFFIC_UNAWARE',
+  'TRAFFIC_AWARE',
+  'TRAFFIC_AWARE_OPTIMAL',
+]);
+
+function defaultRoutingPreference(
+  travelMode: NonNullable<RoutesBody['travelMode']>
+): 'TRAFFIC_UNAWARE' | 'TRAFFIC_AWARE' | 'TRAFFIC_AWARE_OPTIMAL' {
+  if (travelMode === 'WALK' || travelMode === 'BICYCLE') return 'TRAFFIC_UNAWARE';
+  return 'TRAFFIC_AWARE_OPTIMAL';
+}
 
 export function OPTIONS() {
   return new NextResponse(null, { status: 204, headers: corsHeaders });
@@ -175,6 +193,10 @@ export async function POST(request: Request) {
     const destinationMode = body?.destinationMode === 'returnToOrigin' ? 'returnToOrigin' : 'lastStop';
     const optimizeWaypointOrder =
       typeof body?.optimizeWaypointOrder === 'boolean' ? body.optimizeWaypointOrder : true;
+    const routingPreference =
+      body?.routingPreference && ROUTING_PREFS.has(body.routingPreference)
+        ? body.routingPreference
+        : defaultRoutingPreference(travelMode);
 
     rotasLog('POST entrada (resumo)', {
       origin: origin
@@ -183,6 +205,7 @@ export async function POST(request: Request) {
       travelMode,
       destinationMode,
       optimizeWaypointOrder,
+      routingPreference,
       stopsCount: rawStops.length,
       stopsTipos: rawStops.map((s, i) =>
         typeof s === 'string' ? `string[${i}]` : isLatLng(s) ? `latLng[${i}]` : `? [${i}]`
@@ -220,9 +243,26 @@ export async function POST(request: Request) {
     const effectiveOptimize =
       optimizeWaypointOrder && intermediatesCoords.length > 0 ? true : false;
 
+    /**
+     * Google Routes API: `optimize_waypoint_order` + `TRAFFIC_AWARE_OPTIMAL` → INVALID_ARGUMENT.
+     * Com otimização de paradas ativa, usamos `TRAFFIC_AWARE` (ainda considera trânsito).
+     */
+    const appliedRoutingPreference =
+      effectiveOptimize && routingPreference === 'TRAFFIC_AWARE_OPTIMAL'
+        ? 'TRAFFIC_AWARE'
+        : routingPreference;
+    if (effectiveOptimize && routingPreference === 'TRAFFIC_AWARE_OPTIMAL') {
+      rotasLog('routingPreference ajustado', {
+        solicitado: 'TRAFFIC_AWARE_OPTIMAL',
+        aplicado: 'TRAFFIC_AWARE',
+        motivo: 'optimizeWaypointOrder incompatível com OPTIMAL',
+      });
+    }
+
     rotasLog('coordenadas resolvidas → Routes API', {
       destinationMode,
       effectiveOptimize,
+      routingPreference: appliedRoutingPreference,
       origin: { lat: roundCoord(origin.lat), lng: roundCoord(origin.lng) },
       destination: {
         lat: roundCoord(destinationCoord.lat),
@@ -256,7 +296,7 @@ export async function POST(request: Request) {
       travelMode,
       optimizeWaypointOrder: effectiveOptimize,
       computeAlternativeRoutes: false,
-      routingPreference: 'TRAFFIC_AWARE',
+      routingPreference: appliedRoutingPreference,
       polylineQuality: 'HIGH_QUALITY',
     };
 
@@ -339,6 +379,7 @@ export async function POST(request: Request) {
         duration: durationSec > 0 ? `${durationSec}s` : (route?.duration ?? null),
         destinationMode,
         optimizeWaypointOrder: effectiveOptimize,
+        routingPreference: appliedRoutingPreference,
         optimizedIntermediateWaypointIndex: optimizedIdx.length ? optimizedIdx : undefined,
         visitOrder,
         resolvedStops,

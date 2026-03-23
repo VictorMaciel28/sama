@@ -193,6 +193,18 @@ model platform_order_envio {
   order_num   Int
   motorista_id Int
   created_at  DateTime       @default(now()) @db.DateTime(0)
+  /** Nome do arquivo no Blob (último segmento do path), ex.: 1730000000_abc123.jpg */
+  foto_name   String?        @db.VarChar(255)
+  /** Path no Vercel Blob (pathname retornado pelo put), ex.: pedidos/3012/entrega/....jpg */
+  foto_path   String?        @db.VarChar(1024)
+  /** JSON: {"lat": number, "lng": number} no momento do envio */
+  foto_coordenada String?    @db.VarChar(255)
+  /** Data/hora em que a foto de comprovação foi registrada */
+  foto_data   DateTime?      @db.DateTime(0)
+  assinatura_name   String?    @db.VarChar(255)
+  assinatura_path   String?    @db.VarChar(1024)
+  assinatura_data   DateTime?  @db.DateTime(0)
+  assinatura_coordenada String? @db.VarChar(255)
 
   order       platform_order @relation(fields: [order_num], references: [numero], onDelete: Cascade)
   motorista   motorista      @relation(fields: [motorista_id], references: [id], onDelete: Cascade)
