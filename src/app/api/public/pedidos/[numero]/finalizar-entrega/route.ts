@@ -1,7 +1,7 @@
 import { put } from '@vercel/blob';
 import { NextResponse } from 'next/server';
 import { prisma } from '@/lib/prisma';
-import { tinyV3Fetch } from '@/lib/tinyOAuth';
+import { isTinyOAuthReauthRequired, tinyV3Fetch } from '@/lib/tinyOAuth';
 import type { PedidoStatus } from '@prisma/client';
 
 /** Tiny: situacao 6 = Entregue (map em pedidos/sync) */
@@ -184,6 +184,17 @@ export async function POST(request: Request, { params }: { params: { numero: str
       { headers: corsHeaders }
     );
   } catch (e) {
+    if (isTinyOAuthReauthRequired(e)) {
+      console.error('[finalizar-entrega]', e.message, e.tinyPayload);
+      return NextResponse.json(
+        {
+          ok: false,
+          code: e.code,
+          error: e.message,
+        },
+        { status: 503, headers: corsHeaders }
+      );
+    }
     const message = e instanceof Error ? e.message : String(e);
     const stack = e instanceof Error ? e.stack : undefined;
     console.error('[finalizar-entrega]', message, stack ?? e);

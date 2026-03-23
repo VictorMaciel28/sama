@@ -62,6 +62,12 @@ export async function POST(req: Request) {
         : body?.email?.toString?.().trim?.()
         ? body.email.toString().trim()
         : undefined
+    const telefone: string | null | undefined =
+      body?.telefone === null || body?.telefone === ''
+        ? null
+        : body?.telefone?.toString?.().trim?.()
+          ? body.telefone.toString().trim()
+          : undefined
     const id_vendedor_externo: string | undefined =
       body?.id_vendedor_externo?.toString?.().trim?.() || undefined
     const tipo_acesso: 'VENDEDOR' | 'TELEVENDAS' | undefined =
@@ -70,7 +76,7 @@ export async function POST(req: Request) {
       body?.nivel_acesso === 'SUPERVISOR' || body?.nivel_acesso === 'ADMINISTRADOR' ? body.nivel_acesso : undefined
     const password: string | undefined = typeof body?.password === 'string' && body.password.trim() ? body.password.trim() : undefined
 
-    if (!id && nome === undefined && email === undefined && tipo_acesso === undefined) {
+    if (!id && nome === undefined && email === undefined && telefone === undefined && tipo_acesso === undefined) {
       return NextResponse.json({ ok: false, error: 'Nada para atualizar' }, { status: 400 })
     }
 
@@ -80,6 +86,7 @@ export async function POST(req: Request) {
         data: {
           nome: nome ?? undefined,
           email: email,
+          ...(telefone !== undefined ? { telefone } : {}),
         },
       })
     }

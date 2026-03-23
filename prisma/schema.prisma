@@ -12,6 +12,8 @@ model vendedor {
   id        Int       @id @default(autoincrement())
   nome      String    @db.VarChar(150)
   email     String?   @db.VarChar(150)
+  /** Telefone de contato (opcional; não vem do Tiny por padrão). */
+  telefone  String?   @db.VarChar(30)
   senha_encrypted String? @db.VarChar(512)
   tiny_id   Int?
   id_vendedor_externo String? @db.VarChar(100)

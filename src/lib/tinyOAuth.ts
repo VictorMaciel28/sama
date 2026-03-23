@@ -4,6 +4,32 @@ const TINY_OAUTH_TOKEN_URL =
   'https://accounts.tiny.com.br/realms/tiny/protocol/openid-connect/token'
 const TINY_V3_BASE_URL = 'https://api.tiny.com.br/public-api/v3'
 
+/** Refresh token revogado/expirado — só resolve com novo fluxo OAuth (authorization code). */
+export class TinyOAuthReauthRequiredError extends Error {
+  readonly code = 'TINY_OAUTH_REAUTH_REQUIRED' as const
+
+  constructor(
+    message: string,
+    public readonly tinyPayload?: unknown
+  ) {
+    super(message)
+    this.name = 'TinyOAuthReauthRequiredError'
+  }
+}
+
+export function isTinyOAuthReauthRequired(e: unknown): e is TinyOAuthReauthRequiredError {
+  return e instanceof TinyOAuthReauthRequiredError
+}
+
+function tinyTokenErrorNeedsReauth(tokenJson: unknown): boolean {
+  if (!tokenJson || typeof tokenJson !== 'object') return false
+  const o = tokenJson as Record<string, unknown>
+  if (o.error === 'invalid_grant') return true
+  const desc = String(o.error_description ?? '')
+  if (/not active|revoked|invalid.?refresh/i.test(desc)) return true
+  return false
+}
+
 export async function getActiveTinyOAuthAccount() {
   return prisma.tiny_oauth_account.findFirst({
     where: { active: true },
@@ -34,6 +60,12 @@ export async function refreshTinyAccessToken(accountId: number) {
   })
   const tokenJson = await tokenRes.json().catch(() => null)
   if (!tokenRes.ok || !tokenJson?.access_token) {
+    if (tinyTokenErrorNeedsReauth(tokenJson)) {
+      throw new TinyOAuthReauthRequiredError(
+        'O token de atualização do Tiny não é mais válido (expirou, foi revogado ou a sessão foi encerrada). É necessário conectar o OAuth do Tiny de novo no painel administrativo.',
+        tokenJson
+      )
+    }
     throw new Error(`Falha ao renovar token OAuth Tiny: ${JSON.stringify(tokenJson)}`)
   }
 

@@ -9,6 +9,7 @@ type Vendedor = {
   id_vendedor_externo?: string | null
   nome: string
   email?: string | null
+  telefone?: string | null
   tipo_acesso?: 'VENDEDOR' | 'TELEVENDAS' | null
   nivel_acesso?: 'SUPERVISOR' | 'ADMINISTRADOR' | null
   senha?: string | null
@@ -23,6 +24,7 @@ export default function VendedoresPage() {
   const [editing, setEditing] = useState<Vendedor | null>(null)
   const [formNome, setFormNome] = useState('')
   const [formEmail, setFormEmail] = useState<string | ''>('')
+  const [formTelefone, setFormTelefone] = useState('')
   const [formTipo, setFormTipo] = useState<'VENDEDOR' | 'TELEVENDAS' | ''>('')
   const [formNivel, setFormNivel] = useState<'SUPERVISOR' | 'ADMINISTRADOR' | ''>('')
   const [formPassword, setFormPassword] = useState<string>('')
@@ -66,6 +68,7 @@ export default function VendedoresPage() {
     setEditing(v)
     setFormNome(v.nome || '')
     setFormEmail(v.email || '')
+    setFormTelefone(v.telefone || '')
     setFormTipo((v.tipo_acesso as any) || '')
     setFormNivel((v.nivel_acesso as any) || '')
     setFormPassword((v as any).senha || '')
@@ -78,6 +81,7 @@ export default function VendedoresPage() {
       id: editing.id,
       nome: formNome.trim(),
       email: formEmail.trim() || null,
+      telefone: formTelefone.trim() || null,
     }
     if (editing.id_vendedor_externo) {
       payload.id_vendedor_externo = editing.id_vendedor_externo
@@ -124,6 +128,7 @@ export default function VendedoresPage() {
                     <th>ID Externo</th>
                     <th>Nome</th>
                     <th>Email</th>
+                    <th>Telefone</th>
                       <th>Tipo de Acesso</th>
                     <th>Nível de Acesso</th>
                     <th style={{ width: 1 }}>Ações</th>
@@ -142,6 +147,7 @@ export default function VendedoresPage() {
                       <td>{v.id_vendedor_externo ?? '-'}</td>
                       <td>{v.nome}</td>
                       <td>{v.email ?? '-'}</td>
+                      <td>{v.telefone ?? '-'}</td>
                       <td>{v.tipo_acesso ? (v.tipo_acesso === 'TELEVENDAS' ? 'Televendas' : 'Vendedor') : '-'}</td>
                       <td>{v.nivel_acesso ? (v.nivel_acesso === 'ADMINISTRADOR' ? 'Administrador' : 'Supervisor') : '-'}</td>
                       <td>
@@ -205,6 +211,18 @@ export default function VendedoresPage() {
                     value={formEmail}
                     onChange={(e) => setFormEmail(e.target.value)}
                   />
+                </div>
+                <div className="mb-3">
+                  <label className="form-label">Telefone</label>
+                  <input
+                    type="tel"
+                    className="form-control"
+                    value={formTelefone}
+                    onChange={(e) => setFormTelefone(e.target.value)}
+                    placeholder="Opcional"
+                    autoComplete="tel"
+                  />
+                  <small className="text-muted">Campo opcional para contato do vendedor.</small>
                 </div>
                 <div className="mb-3">
                   <label className="form-label">Tipo de Acesso</label>

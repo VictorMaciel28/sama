@@ -116,10 +116,16 @@ export async function GET(request: Request) {
     const vendors = vendorIds.length
       ? await prisma.vendedor.findMany({
           where: { id_vendedor_externo: { in: vendorIds } },
-          select: { id_vendedor_externo: true, nome: true },
+          select: { id_vendedor_externo: true, nome: true, telefone: true },
         })
       : [];
     const vendorNameByExternal = new Map(vendors.map((v) => [v.id_vendedor_externo, v.nome]));
+    const vendorTelefoneByExternal = new Map(
+      vendors.map((v) => {
+        const t = v.telefone?.trim();
+        return [v.id_vendedor_externo, t && t.length > 0 ? t : null] as const;
+      })
+    );
 
     const tinyIds = Array.from(new Set(orders.map((o) => o.tiny_id).filter((id) => id != null))) as number[];
     const histories = tinyIds.length
@@ -161,7 +167,9 @@ export async function GET(request: Request) {
         cliente: order.cliente,
         cnpj: order.cnpj,
         vendedor: order.id_vendedor_externo ? vendorNameByExternal.get(order.id_vendedor_externo) || null : null,
-        vendedor_telefone: null,
+        vendedor_telefone: order.id_vendedor_externo
+          ? vendorTelefoneByExternal.get(order.id_vendedor_externo) ?? null
+          : null,
         cliente_telefone: clienteTelefone,
         endereco,
         valor: Number(order.total),

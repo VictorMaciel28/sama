@@ -109,10 +109,12 @@ export async function GET(request: Request, { params }: { params: { numero: stri
     const vendors = vendorIds.length
       ? await prisma.vendedor.findMany({
           where: { id_vendedor_externo: { in: vendorIds } },
-          select: { id_vendedor_externo: true, nome: true },
+          select: { id_vendedor_externo: true, nome: true, telefone: true },
         })
       : [];
     const vendorName = vendors[0]?.nome ?? null;
+    const vendorTelefoneRaw = vendors[0]?.telefone?.trim();
+    const vendorTelefone = vendorTelefoneRaw && vendorTelefoneRaw.length > 0 ? vendorTelefoneRaw : null;
 
     const histories = order.tiny_id
       ? await prisma.platform_order_status_history.findMany({
@@ -145,7 +147,7 @@ export async function GET(request: Request, { params }: { params: { numero: stri
       status: order.status,
       status_em: statusEm,
       vendedor: vendorName,
-      vendedor_telefone: null as string | null,
+      vendedor_telefone: vendorTelefone,
       cliente_telefone: clienteTelefone,
       forma_recebimento: order.forma_recebimento,
       condicao_pagamento: order.condicao_pagamento,
