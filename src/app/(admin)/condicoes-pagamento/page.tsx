@@ -2,24 +2,30 @@
 
 import { useEffect, useState, useRef } from 'react'
 
-type Cond = {
-  id: number
-  name: string
-  percent: string
-}
-
 export default function CondicoesPagamentoPage() {
-  const [rows, setRows] = useState<Array<{ id?: number | null; name: string; percent: string | number }>>([])
+  const [rows, setRows] = useState<
+    Array<{ id?: number | null; name: string; percent: string | number; valor_minimo?: string | number | null }>
+  >([])
   const [loading, setLoading] = useState(false)
   const [saving, setSaving] = useState(false)
   const deletedIdsRef = useRef<Set<number>>(new Set())
-  const originalRef = useRef<Record<number, { name: string; percent: number }>>({})
+  const originalRef = useRef<Record<number, { name: string; percent: number; valor_minimo: number | null }>>({})
   const debounceTimers = useRef<Record<number, ReturnType<typeof setTimeout> | null>>({})
 
   async function load() {
     const res = await fetch('/api/condicoes-pagamento')
     const json = await res.json()
-    if (json?.ok) setRows(json.data || [])
+    if (json?.ok) {
+      setRows(
+        (json.data || []).map((row: any) => ({
+          ...row,
+          valor_minimo:
+            row.valor_minimo != null && !Number.isNaN(Number(row.valor_minimo))
+              ? String(Number(row.valor_minimo))
+              : '',
+        }))
+      )
+    }
   }
 
   useEffect(() => {
@@ -29,12 +35,17 @@ export default function CondicoesPagamentoPage() {
   useEffect(() => {
     originalRef.current = {}
     rows.forEach((r) => {
-      if (r.id) originalRef.current[Number(r.id)] = { name: r.name, percent: Number(r.percent || 0) }
+      if (r.id) {
+        const vm = r.valor_minimo
+        const vmNum =
+          vm === '' || vm == null || Number.isNaN(Number(vm)) ? null : Number(vm)
+        originalRef.current[Number(r.id)] = { name: r.name, percent: Number(r.percent || 0), valor_minimo: vmNum }
+      }
     })
   }, [rows])
 
   function handleAdd() {
-    setRows((prev) => [...prev, { id: null, name: '', percent: '' }])
+    setRows((prev) => [...prev, { id: null, name: '', percent: '', valor_minimo: '' }])
   }
 
   async function handleRemove(index: number) {
@@ -66,7 +77,13 @@ export default function CondicoesPagamentoPage() {
     }
   }
 
-  function handleChange(index: number, field: 'name' | 'percent', value: string) {
+  function parseValorMinimoPayload(raw: string | number | null | undefined): number | null {
+    if (raw === '' || raw == null) return null
+    const n = Number(raw)
+    return Number.isNaN(n) || n <= 0 ? null : n
+  }
+
+  function handleChange(index: number, field: 'name' | 'percent' | 'valor_minimo', value: string) {
     setRows((prev) => {
       const next = [...prev]
       next[index] = { ...next[index], [field]: value }
@@ -87,7 +104,18 @@ export default function CondicoesPagamentoPage() {
             const res = await fetch('/api/condicoes-pagamento', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ create: [], update: [{ id: Number(current.id), name: String(current.name).trim(), percent: Number(current.percent || 0) }], delete: [] }),
+              body: JSON.stringify({
+                create: [],
+                update: [
+                  {
+                    id: Number(current.id),
+                    name: String(current.name).trim(),
+                    percent: Number(current.percent || 0),
+                    valor_minimo: parseValorMinimoPayload(current.valor_minimo),
+                  },
+                ],
+                delete: [],
+              }),
             })
             const json = await res.json()
             if (json?.ok) setRows(json.data || [])
@@ -100,7 +128,17 @@ export default function CondicoesPagamentoPage() {
             const res = await fetch('/api/condicoes-pagamento', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ create: [{ name: String(current.name).trim(), percent: Number(current.percent || 0) }], update: [], delete: [] }),
+              body: JSON.stringify({
+                create: [
+                  {
+                    name: String(current.name).trim(),
+                    percent: Number(current.percent || 0),
+                    valor_minimo: parseValorMinimoPayload(current.valor_minimo),
+                  },
+                ],
+                update: [],
+                delete: [],
+              }),
             })
             const json = await res.json()
             if (json?.ok) setRows(json.data || [])
@@ -119,13 +157,29 @@ export default function CondicoesPagamentoPage() {
   async function handleSave() {
     setSaving(true)
     try {
-      const toCreate = rows.filter((r) => !r.id && String(r.name || '').trim() !== '').map((r) => ({ name: String(r.name).trim(), percent: Number(r.percent || 0) }))
+      const toCreate = rows
+        .filter((r) => !r.id && String(r.name || '').trim() !== '')
+        .map((r) => ({
+          name: String(r.name).trim(),
+          percent: Number(r.percent || 0),
+          valor_minimo: parseValorMinimoPayload(r.valor_minimo),
+        }))
       const toUpdate = rows
         .filter((r) => r.id)
-        .map((r) => ({ id: Number(r.id), name: String(r.name).trim(), percent: Number(r.percent || 0) }))
+        .map((r) => ({
+          id: Number(r.id),
+          name: String(r.name).trim(),
+          percent: Number(r.percent || 0),
+          valor_minimo: parseValorMinimoPayload(r.valor_minimo),
+        }))
         .filter((r) => {
           const orig = originalRef.current[r.id]
-          return !orig || orig.name !== r.name || Number(orig.percent) !== Number(r.percent)
+          return (
+            !orig ||
+            orig.name !== r.name ||
+            Number(orig.percent) !== Number(r.percent) ||
+            (orig.valor_minimo ?? null) !== (r.valor_minimo ?? null)
+          )
         })
       const toDelete = Array.from(deletedIdsRef.current)
 
@@ -152,7 +206,7 @@ export default function CondicoesPagamentoPage() {
           <div className="d-flex align-items-center justify-content-between mb-3">
             <div>
               <h4 className="mb-0">Condições de pagamento</h4>
-              <small className="text-muted">Gerencie condições e adicional administrativo (%)</small>
+              <small className="text-muted">Gerencie condições, adicional administrativo (%) e valor mínimo do pedido (R$)</small>
             </div>
           </div>
 
@@ -163,11 +217,20 @@ export default function CondicoesPagamentoPage() {
                   {rows.map((r, idx) => (
                     <div key={(r.id ?? 'new') + '_' + idx} className="list-group-item d-flex align-items-center gap-2">
                       <div className="flex-grow-1 row g-2 align-items-center">
-                        <div className="col-md-6">
+                        <div className="col-md-4">
                           <input className="form-control" value={r.name} onChange={(e) => handleChange(idx, 'name', e.target.value)} placeholder="Condição (ex: 14/21D)" />
                         </div>
-                        <div className="col-md-5">
+                        <div className="col-md-3">
                           <input className="form-control" value={String(r.percent ?? '')} onChange={(e) => handleChange(idx, 'percent', e.target.value)} placeholder="Adicional administrativo (%)" />
+                        </div>
+                        <div className="col-md-4">
+                          <input
+                            className="form-control"
+                            value={r.valor_minimo === null || r.valor_minimo === undefined ? '' : String(r.valor_minimo)}
+                            onChange={(e) => handleChange(idx, 'valor_minimo', e.target.value)}
+                            placeholder="Valor mínimo do pedido (R$)"
+                            inputMode="decimal"
+                          />
                         </div>
                         <div className="col-md-1 d-flex justify-content-end">
                           <button type="button" className="btn btn-sm btn-danger" title="Remover" onClick={() => handleRemove(idx)}>✕</button>

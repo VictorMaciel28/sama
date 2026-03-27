@@ -19,6 +19,22 @@ export const findAllParent = (menuItems: MenuItemType[], menuItem: MenuItemType)
 
 export const getMenuItemFromURL = (items: MenuItemType | MenuItemType[], url: string): MenuItemType | undefined => {
   if (items instanceof Array) {
+    if (url?.startsWith('/supervisor/')) {
+      const parts = url.split('/').filter(Boolean)
+      const section = parts[2]
+      if (section === 'vendedores') {
+        for (const item of items) {
+          const hit = item.children?.find((c) => c.key === 'supervisao-vendedores')
+          if (hit) return hit
+        }
+      }
+      if (section === 'clientes') {
+        for (const item of items) {
+          const hit = item.children?.find((c) => c.key === 'supervisao-clientes')
+          if (hit) return hit
+        }
+      }
+    }
     for (const item of items) {
       const foundItem = getMenuItemFromURL(item, url)
       if (foundItem) {

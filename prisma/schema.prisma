@@ -17,6 +17,17 @@ model vendedor {
   senha_encrypted String? @db.VarChar(512)
   tiny_id   Int?
   id_vendedor_externo String? @db.VarChar(100)
+  razao_social                  String? @db.VarChar(255)
+  endereco_razao                String? @db.VarChar(512)
+  nome_representante            String? @db.VarChar(200)
+  endereco_representante        String? @db.Text
+  cpf_representante             String? @db.VarChar(20)
+  identidade_representante      String? @db.VarChar(40)
+  conta_bancaria                String? @db.VarChar(255)
+  pix                           String? @db.VarChar(255)
+  /** ID externo do supervisor cadastrado em `supervisor`. */
+  supervisor_responsavel_externo String? @db.VarChar(100)
+  observacao                    String? @db.Text
   clientes  cliente[]
 
   @@index([tiny_id], map: "idx_vendedor_tiny_id")
@@ -127,6 +138,7 @@ enum VendedorTipoAcesso {
 enum NivelAcesso {
   SUPERVISOR
   ADMINISTRADOR
+  OPERADOR
 }
 
 model vendedor_tipo_acesso {
@@ -536,10 +548,12 @@ model user_branch {
 
 // Payment conditions for orders (configured by admin)
 model payment_condition {
-  id         Int      @id @default(autoincrement())
-  name       String   @db.VarChar(100) // e.g. "14/21D"
-  percent    Decimal  @db.Decimal(5, 2) // administrative additional percent (e.g. 3.00)
-  created_at DateTime @default(now()) @db.DateTime(0)
+  id           Int      @id @default(autoincrement())
+  name         String   @db.VarChar(100) // e.g. "14/21D"
+  percent      Decimal  @db.Decimal(5, 2) // administrative additional percent (e.g. 3.00)
+  /// Valor mínimo do pedido (BRL) para esta condição; null ou 0 = sem exigência.
+  valor_minimo Decimal? @db.Decimal(15, 2)
+  created_at   DateTime @default(now()) @db.DateTime(0)
 }
 
 model webhook_log {

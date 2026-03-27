@@ -16,7 +16,7 @@ export async function GET() {
 
     const externo = vend.id_vendedor_externo
     const tipoRow = await prisma.vendedor_tipo_acesso.findUnique({ where: { id_vendedor_externo: externo } })
-    const tipo = tipoRow?.tipo || 'VENDEDOR'
+    const tipo = tipoRow?.tipo ?? null
     const nivelRow = await prisma.vendedor_nivel_acesso
       .findUnique({ where: { id_vendedor_externo: externo } })
       .catch(() => null)

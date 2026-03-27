@@ -108,6 +108,20 @@ export const MENU_ITEMS: MenuItemType[] = [
         url: '/supervisao/vendas',
         parentKey: 'supervisao',
       },
+      {
+        key: 'supervisao-vendedores',
+        label: 'Vendedores',
+        icon: 'ri:user-star-line',
+        url: '/supervisao/vendedores',
+        parentKey: 'supervisao',
+      },
+      {
+        key: 'supervisao-clientes',
+        label: 'Clientes',
+        icon: 'ri:team-line',
+        url: '/supervisao/clientes',
+        parentKey: 'supervisao',
+      },
     ],
   },
 ]

@@ -908,7 +908,9 @@ export default function PedidoFormPage() {
   }, [subtotal, descontoPercent, descontoHabilitado, form.total, isNew, itens.length])
 
   // Payment conditions are loaded from server (payment_condition table).
-  const [paymentConditions, setPaymentConditions] = useState<{ id: number; name: string; percent: number }[]>([])
+  const [paymentConditions, setPaymentConditions] = useState<
+    { id: number; name: string; percent: number; valor_minimo: number | null }[]
+  >([])
 
   useEffect(() => {
     let mounted = true
@@ -917,11 +919,15 @@ export default function PedidoFormPage() {
         const json = await fetchJsonCached('/api/condicoes-pagamento', 10000)
         if (mounted && json?.ok && Array.isArray(json.data)) {
           setPaymentConditions(
-            json.data.map((r: any) => ({
-              id: Number(r.id),
-              name: String(r.name),
-              percent: Number(r.percent || 0),
-            }))
+            json.data.map((r: any) => {
+              const vm = r.valor_minimo != null ? Number(r.valor_minimo) : null
+              return {
+                id: Number(r.id),
+                name: String(r.name),
+                percent: Number(r.percent || 0),
+                valor_minimo: vm != null && Number.isFinite(vm) && vm > 0 ? vm : null,
+              }
+            })
           )
         }
       } catch (e) {
@@ -1013,16 +1019,18 @@ export default function PedidoFormPage() {
     return 0.04
   }, [formaRecebimento, diasParcelas, condicaoPagamento, paymentConditions])
 
-  // Validação: valor mínimo da parcela para Boleto
+  // Validação: valor mínimo do pedido conforme condição cadastrada (payment_condition.valor_minimo)
   const pagamentoParceladoErro = useMemo(() => {
-    if (formaRecebimento !== 'Boleto') return ''
-    if (!parcelas || parcelas.length === 0) return ''
-    const valorParcela = parcelas[0]?.valor ?? 0
-    if (valorParcela < 400) {
-      return 'Conforme as políticas comerciais atuais, o valor da parcela deve superar 400 reais.'
+    if (formaRecebimento !== 'Boleto' || !condicaoPagamento) return ''
+    const cfg = paymentConditions.find((c) => c.name === condicaoPagamento)
+    const min = cfg?.valor_minimo
+    if (min == null || min <= 0) return ''
+    if (totalComDesconto < min) {
+      const fmt = min.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+      return `O valor mínimo do pedido deve ser de ${fmt}, de acordo com o método de pagamento escolhido.`
     }
     return ''
-  }, [formaRecebimento, parcelas])
+  }, [formaRecebimento, condicaoPagamento, paymentConditions, totalComDesconto])
 
   // Apply markup on itens when boleto condition changes
   useEffect(() => {
@@ -1222,9 +1230,20 @@ export default function PedidoFormPage() {
               <Form.Label>Condição de pagamento</Form.Label>
               <Form.Select value={condicaoPagamento} onChange={(e) => setCondicaoPagamento(e.target.value)}>
                 <option value="">Selecione</option>
-                {condicoesPagamentoOptions.map((opt) => (
-                  <option key={opt} value={opt}>{opt}</option>
-                ))}
+                {condicoesPagamentoOptions.map((opt) => {
+                  const cfg = paymentConditions.find((c) => c.name === opt)
+                  const min = cfg?.valor_minimo
+                  const minSuffix =
+                    min != null && min > 0
+                      ? ` (min ${min.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}RS)`
+                      : ''
+                  return (
+                    <option key={opt} value={opt}>
+                      {opt}
+                      {minSuffix}
+                    </option>
+                  )
+                })}
               </Form.Select>
             </Col>
             {/* removed extra placeholder column */}
@@ -1453,9 +1472,7 @@ export default function PedidoFormPage() {
                   </Table>
                 </div>
                 {pagamentoParceladoErro && (
-                  <div className="text-danger mt-2">
-                    Conforme as políticas comerciais atuais, <strong>o valor da parcela deve superar 400 reais</strong>.
-                  </div>
+                  <div className="text-danger mt-2">{pagamentoParceladoErro}</div>
                 )}
               </div>
             )}

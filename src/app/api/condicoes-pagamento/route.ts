@@ -14,9 +14,15 @@ export async function POST(req: Request) {
   try {
     const body = await req.json()
 
-    // Support bulk operations: { create: [{name,percent}], update: [{id,name,percent}], delete: [id...] }
-    const toCreate: Array<{ name: string; percent: number }> = Array.isArray(body?.create) ? body.create : []
-    const toUpdate: Array<{ id: number; name?: string; percent?: number }> = Array.isArray(body?.update) ? body.update : []
+    // Support bulk operations: { create: [{name,percent,valor_minimo?}], update: [{id,...}], delete: [id...] }
+    const toCreate: Array<{ name: string; percent: number; valor_minimo?: number | null }> = Array.isArray(body?.create)
+      ? body.create
+      : []
+    const toUpdate: Array<{ id: number; name?: string; percent?: number; valor_minimo?: number | null }> = Array.isArray(
+      body?.update
+    )
+      ? body.update
+      : []
     const toDelete: number[] = Array.isArray(body?.delete) ? body.delete.map((v: any) => Number(v)).filter((n: number) => !Number.isNaN(n)) : []
 
     // Validate payload minimally
@@ -24,7 +30,9 @@ export async function POST(req: Request) {
       if (!c?.name || Number.isNaN(Number(c.percent))) return NextResponse.json({ ok: false, error: 'Payload inválido (create)' }, { status: 400 })
     }
     for (const u of toUpdate) {
-      if (!u?.id || (u.name == null && u.percent == null)) return NextResponse.json({ ok: false, error: 'Payload inválido (update)' }, { status: 400 })
+      if (!u?.id || (u.name == null && u.percent == null && u.valor_minimo === undefined)) {
+        return NextResponse.json({ ok: false, error: 'Payload inválido (update)' }, { status: 400 })
+      }
     }
 
     try {
@@ -39,8 +47,14 @@ export async function POST(req: Request) {
             tx.payment_condition.update({
               where: { id: u.id },
               data: {
-                name: u.name?.toString().slice(0, 100),
+                name: u.name !== undefined ? u.name?.toString().slice(0, 100) : undefined,
                 percent: typeof u.percent === 'number' ? u.percent : undefined,
+                valor_minimo:
+                  u.valor_minimo === undefined
+                    ? undefined
+                    : u.valor_minimo === null || Number.isNaN(Number(u.valor_minimo))
+                      ? null
+                      : Number(u.valor_minimo),
               },
             }).catch(() => null)
           )
@@ -52,6 +66,10 @@ export async function POST(req: Request) {
               data: {
                 name: c.name.toString().slice(0, 100),
                 percent: c.percent,
+                valor_minimo:
+                  c.valor_minimo == null || c.valor_minimo === '' || Number.isNaN(Number(c.valor_minimo))
+                    ? null
+                    : Number(c.valor_minimo),
               },
             })
           )
