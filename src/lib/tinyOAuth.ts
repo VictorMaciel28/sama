@@ -21,6 +21,11 @@ export function isTinyOAuthReauthRequired(e: unknown): e is TinyOAuthReauthRequi
   return e instanceof TinyOAuthReauthRequiredError
 }
 
+/** Defina `TINY_OAUTH_DEBUG=1` no `.env` para logs de expiração / refresh (sem expor tokens). */
+function tinyOAuthDebugEnabled() {
+  return process.env.TINY_OAUTH_DEBUG === '1'
+}
+
 function tinyTokenErrorNeedsReauth(tokenJson: unknown): boolean {
   if (!tokenJson || typeof tokenJson !== 'object') return false
   const o = tokenJson as Record<string, unknown>
@@ -38,6 +43,13 @@ export async function getActiveTinyOAuthAccount() {
 }
 
 export async function refreshTinyAccessToken(accountId: number) {
+  if (tinyOAuthDebugEnabled()) {
+    console.log('[tiny-oauth] refreshTinyAccessToken: iniciando POST token (grant_type=refresh_token)', {
+      accountId,
+      nowIso: new Date().toISOString(),
+    })
+  }
+
   const acc = await prisma.tiny_oauth_account.findUnique({ where: { id: accountId } })
   if (!acc) throw new Error('Conta OAuth Tiny não encontrada')
   if (!acc.client_id || !acc.client_secret) {
@@ -60,6 +72,17 @@ export async function refreshTinyAccessToken(accountId: number) {
   })
   const tokenJson = await tokenRes.json().catch(() => null)
   if (!tokenRes.ok || !tokenJson?.access_token) {
+    const errObj =
+      tokenJson && typeof tokenJson === 'object'
+        ? {
+            httpStatus: tokenRes.status,
+            error: (tokenJson as Record<string, unknown>).error,
+            error_description: String(
+              (tokenJson as Record<string, unknown>).error_description ?? ''
+            ).slice(0, 200),
+          }
+        : { httpStatus: tokenRes.status, parse: 'json_fail' }
+    console.warn('[tiny-oauth] refreshTinyAccessToken: falha na resposta do servidor OAuth', errObj)
     if (tinyTokenErrorNeedsReauth(tokenJson)) {
       throw new TinyOAuthReauthRequiredError(
         'O token de atualização do Tiny não é mais válido (expirou, foi revogado ou a sessão foi encerrada). É necessário conectar o OAuth do Tiny de novo no painel administrativo.',
@@ -71,6 +94,14 @@ export async function refreshTinyAccessToken(accountId: number) {
 
   const expiresIn = Number(tokenJson?.expires_in || 0)
   const expiresAt = expiresIn > 0 ? new Date(Date.now() + expiresIn * 1000) : null
+  if (tinyOAuthDebugEnabled()) {
+    console.log('[tiny-oauth] refreshTinyAccessToken: sucesso; novo token_expires_at calculado', {
+      accountId,
+      expiresInSec: expiresIn,
+      newTokenExpiresAtIso: expiresAt?.toISOString() ?? null,
+      nowIso: new Date().toISOString(),
+    })
+  }
   return prisma.tiny_oauth_account.update({
     where: { id: acc.id },
     data: {
@@ -87,14 +118,39 @@ export async function getValidTinyAccessToken(accountId?: number) {
     : await getActiveTinyOAuthAccount()
   if (!account) throw new Error('Conta OAuth Tiny ativa não encontrada')
 
+  const slackMs = 60_000
+  const nowMs = Date.now()
+  const expMs = account.token_expires_at ? account.token_expires_at.getTime() : null
   const expired =
-    !account.token_expires_at || account.token_expires_at.getTime() <= Date.now() + 60_000
+    !account.token_expires_at || account.token_expires_at.getTime() <= nowMs + slackMs
+
+  if (tinyOAuthDebugEnabled()) {
+    const msUntilExpiry = expMs != null ? expMs - nowMs : null
+    console.log('[tiny-oauth] getValidTinyAccessToken', {
+      accountId: account.id,
+      nowIso: new Date(nowMs).toISOString(),
+      /** Valor vindo do Prisma (interpretado em Date no fuso do runtime Node). */
+      tokenExpiresAtIso: account.token_expires_at?.toISOString() ?? null,
+      msUntilExpiry,
+      slackMs,
+      expiredComputed: expired,
+      hasAccessToken: !!account.access_token,
+      decision: !expired && account.access_token ? 'use_cached_access_token' : 'call_refresh_token',
+    })
+  }
+
   if (!expired && account.access_token) {
     return { account, accessToken: account.access_token }
   }
 
   const refreshed = await refreshTinyAccessToken(account.id)
   if (!refreshed.access_token) throw new Error('Access token OAuth Tiny ausente')
+  if (tinyOAuthDebugEnabled()) {
+    console.log('[tiny-oauth] getValidTinyAccessToken: após refresh, usando novo access_token', {
+      accountId: account.id,
+      tokenExpiresAtIso: refreshed.token_expires_at?.toISOString() ?? null,
+    })
+  }
   return { account: refreshed, accessToken: refreshed.access_token }
 }
 
@@ -114,6 +170,13 @@ export async function tinyV3Fetch(
   let res = await fetch(url, { ...init, headers: headersBase })
   if (res.status !== 401) return res
 
+  if (tinyOAuthDebugEnabled()) {
+    console.log('[tiny-oauth] tinyV3Fetch: HTTP 401 na API v3; tentando refresh e repetindo request', {
+      path,
+      accountId: account.id,
+      nowIso: new Date().toISOString(),
+    })
+  }
   const refreshed = await refreshTinyAccessToken(account.id)
   if (!refreshed.access_token) return res
 
