@@ -2,7 +2,7 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Modal } from 'react-bootstrap'
+import { Button, Modal } from 'react-bootstrap'
 import { EMPRESAS_SUPRIMENTOS, labelEmpresa } from '@/constants/empresas-suprimentos'
 import { downloadPurchaseOrderPdf, type PurchaseOrderPdfDetail } from '@/lib/purchaseOrderPdf'
 import { OrdemCompraForm } from './OrdemCompraForm'
@@ -18,15 +18,6 @@ type Row = {
   cliente: { id: number; nome: string; cpf_cnpj?: string | null }
 }
 
-function todayYmd() {
-  return new Date().toISOString().slice(0, 10)
-}
-
-function monthStartYmd() {
-  const d = new Date()
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`
-}
-
 function PrinterIcon() {
   return (
     <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
@@ -35,17 +26,30 @@ function PrinterIcon() {
   )
 }
 
+function TrashIcon() {
+  return (
+    <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
+      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+    </svg>
+  )
+}
+
 export default function OrdemCompraListPage() {
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(false)
+  const [listErr, setListErr] = useState<string | null>(null)
   const [pdfLoadingId, setPdfLoadingId] = useState<number | null>(null)
+  const [deleteLoadingId, setDeleteLoadingId] = useState<number | null>(null)
   const [modalOrderId, setModalOrderId] = useState<number | null>(null)
   const [modalLoading, setModalLoading] = useState(false)
   const [modalSnapshot, setModalSnapshot] = useState<OrdemCompraFormSnapshot | null>(null)
   const [modalError, setModalError] = useState<string | null>(null)
+  const [deleteModalRow, setDeleteModalRow] = useState<Row | null>(null)
+  const [deleteModalError, setDeleteModalError] = useState<string | null>(null)
   const [empresa, setEmpresa] = useState<string>('')
-  const [dataInicio, setDataInicio] = useState(monthStartYmd)
-  const [dataFim, setDataFim] = useState(todayYmd)
+  /** Vazios = sem filtro de data (evita esconder ordens fora do “mês atual até hoje”). */
+  const [dataInicio, setDataInicio] = useState('')
+  const [dataFim, setDataFim] = useState('')
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -56,9 +60,15 @@ export default function OrdemCompraListPage() {
       if (dataFim) p.set('dataFim', dataFim)
       const res = await fetch(`/api/suprimentos/ordens-compra?${p.toString()}`)
       const json = await res.json()
-      if (json?.ok) setRows(json.data || [])
-      else setRows([])
+      if (json?.ok) {
+        setListErr(null)
+        setRows(json.data || [])
+      } else {
+        setListErr(json?.error || 'Não foi possível carregar a lista.')
+        setRows([])
+      }
     } catch {
+      setListErr('Erro de rede ao carregar.')
       setRows([])
     } finally {
       setLoading(false)
@@ -75,6 +85,38 @@ export default function OrdemCompraListPage() {
   const fmtDate = (s: string) => (s ? String(s).slice(0, 10).split('-').reverse().join('/') : '—')
 
   const totalLista = useMemo(() => rows.reduce((a, r) => a + Number(r.valor_total || 0), 0), [rows])
+
+  const openDeleteModal = useCallback((r: Row) => {
+    setDeleteModalError(null)
+    setDeleteModalRow(r)
+  }, [])
+
+  const closeDeleteModal = useCallback(() => {
+    if (deleteLoadingId != null) return
+    setDeleteModalRow(null)
+    setDeleteModalError(null)
+  }, [deleteLoadingId])
+
+  const confirmDeleteOrder = useCallback(async () => {
+    if (!deleteModalRow) return
+    const id = deleteModalRow.id
+    setDeleteLoadingId(id)
+    setDeleteModalError(null)
+    try {
+      const res = await fetch(`/api/suprimentos/ordens-compra/${id}`, { method: 'DELETE' })
+      const json = await res.json()
+      if (!json?.ok) {
+        setDeleteModalError(json?.error || 'Não foi possível excluir.')
+        return
+      }
+      setDeleteModalRow(null)
+      await load()
+    } catch {
+      setDeleteModalError('Erro de rede ao excluir.')
+    } finally {
+      setDeleteLoadingId(null)
+    }
+  }, [deleteModalRow, load])
 
   const downloadPdf = useCallback(async (id: number) => {
     setPdfLoadingId(id)
@@ -172,6 +214,11 @@ export default function OrdemCompraListPage() {
               </button>
             </div>
           </div>
+          <div className="small text-muted mb-2">
+            Período opcional: deixe as datas em branco para listar todas as ordens (até 500). Com datas, o filtro usa a{' '}
+            <strong>data</strong> do pedido.
+          </div>
+          {listErr && <div className="alert alert-warning py-2 mb-2">{listErr}</div>}
 
           <div className="table-responsive">
             <table className="table table-sm table-hover align-middle">
@@ -182,7 +229,7 @@ export default function OrdemCompraListPage() {
                   <th>Empresa</th>
                   <th>Fornecedor (contato)</th>
                   <th className="text-end">Total</th>
-                  <th style={{ width: 88 }} className="text-center">
+                  <th style={{ width: 120 }} className="text-center">
                     Ações
                   </th>
                 </tr>
@@ -216,19 +263,37 @@ export default function OrdemCompraListPage() {
                     <td>{r.cliente?.nome || '—'}</td>
                     <td className="text-end">{fmtMoney(r.valor_total)}</td>
                     <td className="text-center" onClick={(e) => e.stopPropagation()}>
-                      <button
-                        type="button"
-                        className="btn btn-outline-secondary btn-sm py-1 px-2"
-                        title="Baixar PDF do pedido"
-                        disabled={pdfLoadingId === r.id}
-                        onClick={() => downloadPdf(r.id)}
-                      >
-                        {pdfLoadingId === r.id ? (
-                          <span className="spinner-border spinner-border-sm" role="status" />
-                        ) : (
-                          <PrinterIcon />
-                        )}
-                      </button>
+                      <div className="d-inline-flex align-items-center gap-1">
+                        <button
+                          type="button"
+                          className="btn btn-outline-secondary btn-sm py-1 px-2"
+                          title="Baixar PDF do pedido"
+                          disabled={pdfLoadingId === r.id || deleteLoadingId === r.id}
+                          onClick={() => downloadPdf(r.id)}
+                        >
+                          {pdfLoadingId === r.id ? (
+                            <span className="spinner-border spinner-border-sm" role="status" />
+                          ) : (
+                            <PrinterIcon />
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-outline-danger btn-sm py-1 px-2"
+                          title="Excluir ordem"
+                          disabled={deleteLoadingId === r.id || pdfLoadingId === r.id}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            openDeleteModal(r)
+                          }}
+                        >
+                          {deleteLoadingId === r.id ? (
+                            <span className="spinner-border spinner-border-sm" role="status" />
+                          ) : (
+                            <TrashIcon />
+                          )}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -242,9 +307,63 @@ export default function OrdemCompraListPage() {
             </div>
           )}
 
-          <div className="small text-muted mt-2">Clique na linha para abrir o pedido no formulário (duplicar / editar).</div>
         </div>
       </div>
+
+      <Modal
+        show={deleteModalRow != null}
+        onHide={closeDeleteModal}
+        centered
+        backdrop={deleteLoadingId != null ? 'static' : true}
+        keyboard={deleteLoadingId == null}
+      >
+        <Modal.Header closeButton className="border-0 pb-0">
+          <Modal.Title className="d-flex align-items-center gap-2 text-danger">
+            <span
+              className="d-inline-flex align-items-center justify-content-center rounded-circle bg-danger bg-opacity-10 text-danger"
+              style={{ width: 40, height: 40 }}
+              aria-hidden
+            >
+              <TrashIcon />
+            </span>
+            Excluir ordem de compra
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body className="pt-2">
+          <p className="mb-3 text-body-secondary">
+            Esta ação não pode ser desfeita. O pedido será removido permanentemente.
+          </p>
+          {deleteModalRow && (
+            <div className="rounded border bg-light p-3 small">
+              <div className="fw-semibold mb-2">Pedido #{deleteModalRow.id}</div>
+              <div className="row g-2">
+                <div className="col-sm-4 text-muted">Fornecedor</div>
+                <div className="col-sm-8">{deleteModalRow.cliente?.nome || '—'}</div>
+                <div className="col-sm-4 text-muted">Data</div>
+                <div className="col-sm-8">{fmtDate(deleteModalRow.data)}</div>
+                <div className="col-sm-4 text-muted">Total</div>
+                <div className="col-sm-8 fw-semibold">{fmtMoney(deleteModalRow.valor_total)}</div>
+              </div>
+            </div>
+          )}
+          {deleteModalError && <div className="alert alert-danger py-2 mt-3 mb-0">{deleteModalError}</div>}
+        </Modal.Body>
+        <Modal.Footer className="border-0 pt-0">
+          <Button variant="outline-secondary" onClick={closeDeleteModal} disabled={deleteLoadingId != null}>
+            Cancelar
+          </Button>
+          <Button variant="danger" onClick={() => void confirmDeleteOrder()} disabled={deleteLoadingId != null}>
+            {deleteLoadingId != null ? (
+              <>
+                <span className="spinner-border spinner-border-sm me-2" role="status" />
+                Excluindo…
+              </>
+            ) : (
+              'Excluir pedido'
+            )}
+          </Button>
+        </Modal.Footer>
+      </Modal>
 
       <Modal show={modalOrderId != null} onHide={closePedidoModal} size="xl" scrollable centered>
         <Modal.Header closeButton>

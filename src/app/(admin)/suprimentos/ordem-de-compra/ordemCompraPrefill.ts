@@ -1,4 +1,5 @@
 import { EMPRESAS_SUPRIMENTOS } from '@/constants/empresas-suprimentos'
+import { formatCnpjDisplay } from '@/lib/cnpjFormat'
 import { parcelasFromCondicaoText, type ParcelaForm } from '@/lib/suprimentosParcelas'
 import type { ClienteOpt, ItemRow, OrdemCompraFormSnapshot } from './ordemCompraFormTypes'
 
@@ -30,15 +31,37 @@ type ApiItem = {
 
 function apiItemToRow(it: ApiItem): ItemRow {
   const pid = it.product_id != null && Number(it.product_id) > 0 ? Number(it.product_id) : null
-  const tiny =
-    it.tiny_produto_id != null && String(it.tiny_produto_id).length > 0
-      ? Number(it.tiny_produto_id)
-      : 0
-  const tinyId = pid ?? (Number.isFinite(tiny) && tiny > 0 ? tiny : 0)
+  const tinyRaw = it.tiny_produto_id != null ? String(it.tiny_produto_id).trim() : ''
+  const tinyNum = tinyRaw ? Number(tinyRaw) : 0
+  const hasTiny = Number.isFinite(tinyNum) && tinyNum > 0
+
+  /** Sem vínculo local nem Tiny: item só texto (manual). */
+  const isManual = !pid && !hasTiny
 
   const codigo = it.product?.code ?? it.produto_codigo ?? ''
   const nome = it.product?.name ?? it.produto_nome ?? '—'
   const label = [codigo, nome].filter(Boolean).join(' — ') || nome
+
+  if (isManual) {
+    const nomeM = String(it.produto_nome ?? it.product?.name ?? '').trim()
+    const codigoM = String(it.produto_codigo ?? it.product?.code ?? '').trim()
+    const labelM = [codigoM, nomeM].filter(Boolean).join(' — ') || nomeM
+    return {
+      rowId: newRowId(),
+      tinyId: 0,
+      manual: true,
+      nome: nomeM,
+      codigo: codigoM || undefined,
+      produtoLabel: labelM,
+      quantidade: Number(it.quantidade) || 0,
+      valor: Number(it.valor) || 0,
+      informacoesAdicionais: it.informacoes_adicionais ?? '',
+      aliquotaIPI: Number(it.aliquota_ipi) || 0,
+      valorICMS: Number(it.valor_icms) || 0,
+    }
+  }
+
+  const tinyId = pid ?? tinyNum
 
   return {
     rowId: newRowId(),
@@ -80,7 +103,7 @@ export function purchaseOrderApiToFormSnapshot(raw: Record<string, unknown>): Or
     nome: cliente?.nome ?? '—',
     cpf_cnpj: cliente?.cpf_cnpj ?? null,
   }
-  const fornecedorInput = `${fornecedor.nome}${fornecedor.cpf_cnpj ? ` — ${fornecedor.cpf_cnpj}` : ''}`
+  const fornecedorInput = `${fornecedor.nome}${fornecedor.cpf_cnpj ? ` — ${formatCnpjDisplay(fornecedor.cpf_cnpj)}` : ''}`
 
   const itemsRaw = Array.isArray(raw.items) ? raw.items : []
   const items = itemsRaw.map((it) => apiItemToRow(it as ApiItem))

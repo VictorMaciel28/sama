@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Card, Row, Col, Form, Button, Table } from 'react-bootstrap'
 import { EMPRESAS_SUPRIMENTOS } from '@/constants/empresas-suprimentos'
+import { formatCnpjDisplay, maskCnpjInput } from '@/lib/cnpjFormat'
 import { parcelasFromCondicaoText, type ParcelaForm } from '@/lib/suprimentosParcelas'
 import type {
   CatalogItem,
@@ -71,6 +72,11 @@ export function OrdemCompraForm({
   const [showFornecedorDd, setShowFornecedorDd] = useState(false)
   const fornecedorBlurTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const fornecedorSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const [fornecedorManualMode, setFornecedorManualMode] = useState(false)
+  const [novoFornecedorNome, setNovoFornecedorNome] = useState('')
+  const [novoFornecedorCnpj, setNovoFornecedorCnpj] = useState('')
+  const [savingFornecedor, setSavingFornecedor] = useState(false)
 
   const [catalogQuery, setCatalogQuery] = useState('')
   const [catalog, setCatalog] = useState<CatalogItem[]>([])
@@ -210,7 +216,7 @@ export function OrdemCompraForm({
 
   const pickFornecedor = (c: ClienteOpt) => {
     setFornecedorSelected(c)
-    setFornecedorInput(`${c.nome}${c.cpf_cnpj ? ` — ${c.cpf_cnpj}` : ''}`)
+    setFornecedorInput(`${c.nome}${c.cpf_cnpj ? ` — ${formatCnpjDisplay(c.cpf_cnpj)}` : ''}`)
     setShowFornecedorDd(false)
   }
 
@@ -219,11 +225,78 @@ export function OrdemCompraForm({
     setFornecedorSelected(null)
   }
 
+  const startNovoFornecedor = () => {
+    setFornecedorManualMode(true)
+    setFornecedorSelected(null)
+    setFornecedorInput('')
+    setFornecedorOptions([])
+    setShowFornecedorDd(false)
+    setNovoFornecedorNome('')
+    setNovoFornecedorCnpj('')
+    setErr(null)
+  }
+
+  const cancelNovoFornecedor = () => {
+    setFornecedorManualMode(false)
+    setNovoFornecedorNome('')
+    setNovoFornecedorCnpj('')
+  }
+
+  const saveNovoFornecedor = async () => {
+    const nome = novoFornecedorNome.trim()
+    if (nome.length < 2) {
+      setErr('Informe o nome ou razão social do fornecedor.')
+      return
+    }
+    setSavingFornecedor(true)
+    setErr(null)
+    try {
+      const res = await fetch('/api/suprimentos/fornecedores-manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nome, cpf_cnpj: novoFornecedorCnpj }),
+      })
+      const json = await res.json()
+      if (!json?.ok || !json.data) {
+        setErr(json?.error || 'Não foi possível salvar o fornecedor.')
+        return
+      }
+      const d = json.data as { id: number; nome: string; cpf_cnpj?: string | null }
+      pickFornecedor({ id: d.id, nome: d.nome, cpf_cnpj: d.cpf_cnpj ?? null })
+      setFornecedorManualMode(false)
+      setNovoFornecedorNome('')
+      setNovoFornecedorCnpj('')
+    } catch {
+      setErr('Erro ao salvar fornecedor.')
+    } finally {
+      setSavingFornecedor(false)
+    }
+  }
+
+  const addManualItem = () => {
+    setItems((prev) => [
+      ...prev,
+      {
+        rowId: newRowId(),
+        tinyId: 0,
+        manual: true,
+        nome: '',
+        codigo: undefined,
+        produtoLabel: '',
+        quantidade: 1,
+        valor: 0,
+        informacoesAdicionais: '',
+        aliquotaIPI: 0,
+        valorICMS: 0,
+      },
+    ])
+  }
+
   const addProduct = (p: CatalogItem) => {
     const preco = Number(p.preco ?? 0)
     const label = [p.codigo, p.nome].filter(Boolean).join(' — ')
     setItems((prev) => {
-      const existing = prev.find((i) => i.tinyId === p.id)
+      const existing = prev.find((i) => !i.manual && i.tinyId === p.id)
       if (existing) {
         return prev.map((i) =>
           i.rowId === existing.rowId ? { ...i, quantidade: Number(i.quantidade) + 1 } : i
@@ -263,19 +336,39 @@ export function OrdemCompraForm({
       setErr('Escolha o fornecedor na lista ao digitar.')
       return
     }
-    const itensPayload = items.map((it) => ({
-      produto: {
-        id: it.tinyId,
-        tipo: 'P' as const,
-        nome: it.nome,
-        codigo: it.codigo,
-      },
-      quantidade: Number(it.quantidade) || 0,
-      valor: Number(it.valor) || 0,
-      informacoesAdicionais: it.informacoesAdicionais || undefined,
-      aliquotaIPI: it.aliquotaIPI || 0,
-      valorICMS: it.valorICMS || 0,
-    }))
+    for (const it of items) {
+      if (it.manual && !String(it.nome).trim()) {
+        setErr('Preencha a descrição de todos os itens manuais.')
+        return
+      }
+    }
+    const itensPayload = items.map((it) =>
+      it.manual
+        ? {
+            produto: {
+              manual: true as const,
+              tipo: 'P' as const,
+              nome: it.nome.trim(),
+              codigo: it.codigo,
+            },
+            quantidade: Number(it.quantidade) || 0,
+            valor: Number(it.valor) || 0,
+            aliquotaIPI: it.aliquotaIPI || 0,
+            valorICMS: it.valorICMS || 0,
+          }
+        : {
+            produto: {
+              id: it.tinyId,
+              tipo: 'P' as const,
+              nome: it.nome,
+              codigo: it.codigo,
+            },
+            quantidade: Number(it.quantidade) || 0,
+            valor: Number(it.valor) || 0,
+            aliquotaIPI: it.aliquotaIPI || 0,
+            valorICMS: it.valorICMS || 0,
+          }
+    )
     if (itensPayload.length === 0) {
       setErr('Adicione ao menos um produto.')
       return
@@ -361,43 +454,109 @@ export function OrdemCompraForm({
                 />
               </Col>
               <Col md={12}>
-                <Form.Label>Fornecedor</Form.Label>
-                <div
-                  className="position-relative"
-                  onBlur={() => {
-                    if (fornecedorBlurTimer.current) clearTimeout(fornecedorBlurTimer.current)
-                    fornecedorBlurTimer.current = setTimeout(() => setShowFornecedorDd(false), 200)
-                  }}
-                >
-                  <Form.Control
-                    type="text"
-                    placeholder="Digite nome ou CNPJ"
-                    value={fornecedorInput}
-                    onChange={(e) => onFornecedorInputChange(e.target.value)}
-                    onFocus={() => {
-                      if (fornecedorOptions.length > 0) setShowFornecedorDd(true)
-                    }}
-                    autoComplete="off"
-                  />
-                  {showFornecedorDd && fornecedorOptions.length > 0 && (
+                <Form.Label className="mb-1">Fornecedor</Form.Label>
+                {!fornecedorManualMode ? (
+                  <div className="d-flex gap-2 align-items-center">
                     <div
-                      className="border rounded bg-white shadow position-absolute w-100 mt-1"
-                      style={{ zIndex: 2000, maxHeight: 280, overflowY: 'auto' }}
+                      className="position-relative flex-grow-1"
+                      style={{ minWidth: 0 }}
+                      onBlur={() => {
+                        if (fornecedorBlurTimer.current) clearTimeout(fornecedorBlurTimer.current)
+                        fornecedorBlurTimer.current = setTimeout(() => setShowFornecedorDd(false), 200)
+                      }}
                     >
-                      {fornecedorOptions.map((opt) => (
+                      <Form.Control
+                        type="text"
+                        placeholder="Digite nome ou CNPJ"
+                        value={fornecedorInput}
+                        onChange={(e) => onFornecedorInputChange(e.target.value)}
+                        onFocus={() => {
+                          if (fornecedorOptions.length > 0) setShowFornecedorDd(true)
+                        }}
+                        autoComplete="off"
+                      />
+                      {showFornecedorDd && fornecedorOptions.length > 0 && (
                         <div
-                          key={opt.id}
-                          className="px-2 py-2 border-bottom"
-                          style={{ cursor: 'pointer' }}
-                          onMouseDown={(e) => e.preventDefault()}
-                          onClick={() => pickFornecedor(opt)}
+                          className="border rounded bg-white shadow position-absolute w-100 mt-1"
+                          style={{ zIndex: 2000, maxHeight: 280, overflowY: 'auto' }}
                         >
-                          <div className="fw-semibold small">{opt.nome}</div>
-                          <div className="text-muted small">{opt.cpf_cnpj || '—'}</div>
+                          {fornecedorOptions.map((opt) => (
+                            <div
+                              key={opt.id}
+                              className="px-2 py-2 border-bottom"
+                              style={{ cursor: 'pointer' }}
+                              onMouseDown={(e) => e.preventDefault()}
+                              onClick={() => pickFornecedor(opt)}
+                            >
+                              <div className="fw-semibold small">{opt.nome}</div>
+                              <div className="text-muted small">{formatCnpjDisplay(opt.cpf_cnpj) || '—'}</div>
+                            </div>
+                          ))}
                         </div>
-                      ))}
+                      )}
                     </div>
-                  )}
+                    <Button
+                      type="button"
+                      variant="outline-primary"
+                      size="sm"
+                      className="flex-shrink-0 text-nowrap"
+                      onClick={startNovoFornecedor}
+                    >
+                      Novo fornecedor
+                    </Button>
+                  </div>
+                ) : (
+                  <Row className="g-2 align-items-end">
+                    <Col xs={12} md>
+                      <Form.Label className="small text-muted mb-0">Nome / razão social</Form.Label>
+                      <Form.Control
+                        type="text"
+                        placeholder="Nome do fornecedor"
+                        value={novoFornecedorNome}
+                        onChange={(e) => setNovoFornecedorNome(e.target.value)}
+                        autoComplete="off"
+                      />
+                    </Col>
+                    <Col xs={12} sm={6} md={4} lg={3}>
+                      <Form.Label className="small text-muted mb-0">CNPJ</Form.Label>
+                      <Form.Control
+                        type="text"
+                        placeholder="00.000.000/0000-00"
+                        inputMode="numeric"
+                        className="font-monospace"
+                        value={novoFornecedorCnpj}
+                        onChange={(e) => setNovoFornecedorCnpj(maskCnpjInput(e.target.value))}
+                        autoComplete="off"
+                      />
+                    </Col>
+                    <Col xs={12} md="auto" className="d-flex flex-wrap gap-1 justify-content-md-end">
+                      <Button
+                        type="button"
+                        variant="outline-secondary"
+                        size="sm"
+                        onClick={cancelNovoFornecedor}
+                        disabled={savingFornecedor}
+                      >
+                        Cancelar
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="primary"
+                        size="sm"
+                        onClick={() => void saveNovoFornecedor()}
+                        disabled={savingFornecedor}
+                      >
+                        {savingFornecedor ? 'Salvando…' : 'Salvar'}
+                      </Button>
+                    </Col>
+                  </Row>
+                )}
+                <div className="small text-muted mt-1">
+                  {fornecedorManualMode
+                    ? 'Cadastra no sistema e já seleciona para este pedido.'
+                    : fornecedorSelected
+                      ? `Selecionado: ${fornecedorSelected.nome}${fornecedorSelected.cpf_cnpj ? ` — ${formatCnpjDisplay(fornecedorSelected.cpf_cnpj)}` : ''}`
+                      : 'Busque um contato ou use Novo fornecedor.'}
                 </div>
               </Col>
             </Row>
@@ -458,8 +617,13 @@ export function OrdemCompraForm({
               </Col>
             </Row>
 
-            <div className="mt-3">
-              <Form.Label className="fw-semibold">Itens do pedido</Form.Label>
+            <div className="mt-3 d-flex flex-wrap justify-content-between align-items-center gap-2">
+              <Form.Label className="fw-semibold mb-0">Itens do pedido</Form.Label>
+              <Button type="button" variant="outline-primary" size="sm" onClick={addManualItem}>
+                + Item manual
+              </Button>
+            </div>
+            <div className="mt-2">
               {items.length === 0 ? (
                 <div className="text-muted small py-3">Nenhum item</div>
               ) : (
@@ -470,7 +634,6 @@ export function OrdemCompraForm({
                         <th>Produto</th>
                         <th style={{ width: 110 }}>Qtd</th>
                         <th style={{ width: 120 }}>Valor un.</th>
-                        <th>Inf. adic.</th>
                         <th style={{ width: 90 }}>IPI %</th>
                         <th style={{ width: 100 }}>ICMS R$</th>
                         <th style={{ width: 44 }} />
@@ -479,7 +642,46 @@ export function OrdemCompraForm({
                     <tbody>
                       {items.map((it) => (
                         <tr key={it.rowId}>
-                          <td className="small">{it.produtoLabel}</td>
+                          <td className="small">
+                            {it.manual ? (
+                              <div className="d-flex flex-row gap-2 align-items-center" style={{ minWidth: 220 }}>
+                                <Form.Control
+                                  size="sm"
+                                  className="font-monospace"
+                                  placeholder="SKU"
+                                  maxLength={12}
+                                  title="Código / SKU (~5 caracteres)"
+                                  style={{ width: '4.25rem', flex: '0 0 auto' }}
+                                  value={it.codigo ?? ''}
+                                  onChange={(e) => {
+                                    const c = e.target.value
+                                    const n = it.nome
+                                    setItem(it.rowId, {
+                                      codigo: c || undefined,
+                                      produtoLabel: [c, n].filter(Boolean).join(' — ') || n,
+                                    })
+                                  }}
+                                />
+                                <Form.Control
+                                  size="sm"
+                                  className="flex-grow-1"
+                                  style={{ minWidth: 0 }}
+                                  placeholder="Descrição"
+                                  value={it.nome}
+                                  onChange={(e) => {
+                                    const n = e.target.value
+                                    const c = it.codigo ?? ''
+                                    setItem(it.rowId, {
+                                      nome: n,
+                                      produtoLabel: [c, n].filter(Boolean).join(' — ') || n,
+                                    })
+                                  }}
+                                />
+                              </div>
+                            ) : (
+                              it.produtoLabel
+                            )}
+                          </td>
                           <td>
                             <Form.Control
                               type="number"
@@ -498,13 +700,6 @@ export function OrdemCompraForm({
                               size="sm"
                               value={it.valor}
                               onChange={(e) => setItem(it.rowId, { valor: Number(e.target.value) })}
-                            />
-                          </td>
-                          <td>
-                            <Form.Control
-                              size="sm"
-                              value={it.informacoesAdicionais}
-                              onChange={(e) => setItem(it.rowId, { informacoesAdicionais: e.target.value })}
                             />
                           </td>
                           <td>

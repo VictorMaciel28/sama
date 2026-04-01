@@ -16,7 +16,7 @@ type ParcelaIn = {
 }
 
 type ItemIn = {
-  produto?: { id?: number; tipo?: string; nome?: string; codigo?: string }
+  produto?: { id?: number; tipo?: string; nome?: string; codigo?: string; manual?: boolean }
   quantidade?: number
   valor?: number
   informacoesAdicionais?: string
@@ -145,20 +145,51 @@ export async function POST(req: Request) {
 
     let bruto = new Prisma.Decimal(0)
     for (const it of rawItems) {
-      const pid = Number(it?.produto?.id)
-      if (!Number.isFinite(pid) || pid <= 0) {
-        return NextResponse.json({ ok: false, error: 'Cada item precisa de produto.id' }, { status: 400 })
-      }
-      const nomeTiny = it?.produto?.nome != null ? String(it.produto.nome).trim() : ''
-      const codigoTiny = it?.produto?.codigo != null ? String(it.produto.codigo).trim() : ''
-
-      const prodLocal = await prisma.product.findUnique({ where: { id: pid } })
       const q = Number(it?.quantidade ?? 0)
       const vu = Number(it?.valor ?? 0)
       if (!Number.isFinite(q) || q <= 0 || !Number.isFinite(vu) || vu < 0) {
         return NextResponse.json({ ok: false, error: 'Quantidade e valor unitário inválidos nos itens' }, { status: 400 })
       }
       const sub = new Prisma.Decimal(q).mul(vu)
+
+      if (it?.produto?.manual === true) {
+        const nomeManual = it?.produto?.nome != null ? String(it.produto.nome).trim() : ''
+        if (!nomeManual) {
+          return NextResponse.json(
+            { ok: false, error: 'Item manual: informe a descrição do produto.' },
+            { status: 400 }
+          )
+        }
+        const codigoManual = it?.produto?.codigo != null ? String(it.produto.codigo).trim() : ''
+        itemsPayload.push({
+          product_id: null,
+          tiny_produto_id: null,
+          produto_codigo: codigoManual ? codigoManual.slice(0, 100) : null,
+          produto_nome: nomeManual.slice(0, 255),
+          quantidade: new Prisma.Decimal(q),
+          valor: new Prisma.Decimal(vu),
+          informacoes_adicionais: it.informacoesAdicionais != null ? String(it.informacoesAdicionais) : null,
+          aliquota_ipi:
+            it.aliquotaIPI != null && Number.isFinite(Number(it.aliquotaIPI))
+              ? new Prisma.Decimal(Number(it.aliquotaIPI))
+              : null,
+          valor_icms:
+            it.valorICMS != null && Number.isFinite(Number(it.valorICMS))
+              ? new Prisma.Decimal(Number(it.valorICMS))
+              : null,
+        })
+        bruto = bruto.add(sub)
+        continue
+      }
+
+      const pid = Number(it?.produto?.id)
+      if (!Number.isFinite(pid) || pid <= 0) {
+        return NextResponse.json({ ok: false, error: 'Cada item precisa de produto.id ou ser marcado como manual' }, { status: 400 })
+      }
+      const nomeTiny = it?.produto?.nome != null ? String(it.produto.nome).trim() : ''
+      const codigoTiny = it?.produto?.codigo != null ? String(it.produto.codigo).trim() : ''
+
+      const prodLocal = await prisma.product.findUnique({ where: { id: pid } })
       bruto = bruto.add(sub)
 
       if (prodLocal) {

@@ -1,6 +1,7 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
 import { EMPRESAS_SUPRIMENTOS, labelEmpresa } from '@/constants/empresas-suprimentos'
+import { formatCnpjDisplay } from '@/lib/cnpjFormat'
 
 export type PurchaseOrderPdfItem = {
   quantidade: string
@@ -75,8 +76,8 @@ export function downloadPurchaseOrderPdf(detail: PurchaseOrderPdfDetail) {
 
   doc.text(`Fornecedor: ${detail.cliente?.nome ?? '—'}`, margin, y)
   y += 5
-  const docCnpj = detail.cliente?.cpf_cnpj?.trim()
-  doc.text(`CNPJ / CPF: ${docCnpj || '—'}`, margin, y)
+  const docCnpj = formatCnpjDisplay(detail.cliente?.cpf_cnpj) || '—'
+  doc.text(`CNPJ: ${docCnpj}`, margin, y)
   y += 7
 
   doc.text(`Data: ${fmtDate(detail.data)}    Data prevista: ${fmtDate(detail.data_prevista)}`, margin, y)

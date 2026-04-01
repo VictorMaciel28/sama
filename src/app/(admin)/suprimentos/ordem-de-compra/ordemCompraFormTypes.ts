@@ -9,7 +9,10 @@ export type PaymentMethodRow = { id: number; code: number; name: string }
 
 export type ItemRow = {
   rowId: string
+  /** Catálogo/Tiny; 0 quando `manual` (texto livre). */
   tinyId: number
+  /** Linha digitada à mão, gravada só com código/nome (sem id). */
+  manual?: boolean
   nome: string
   codigo?: string
   produtoLabel: string

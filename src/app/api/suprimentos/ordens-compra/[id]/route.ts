@@ -50,3 +50,29 @@ export async function GET(_req: Request, context: { params: { id: string } }) {
     return NextResponse.json({ ok: false, error: msg }, { status: 500 })
   }
 }
+
+export async function DELETE(_req: Request, context: { params: { id: string } }) {
+  try {
+    const session = await getServerSession(options as any)
+    if (!session?.user?.id) {
+      return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 })
+    }
+
+    const id = Number(context.params.id)
+    if (!Number.isFinite(id) || id <= 0) {
+      return NextResponse.json({ ok: false, error: 'ID inválido' }, { status: 400 })
+    }
+
+    const existing = await prisma.purchase_order.findUnique({ where: { id }, select: { id: true } })
+    if (!existing) {
+      return NextResponse.json({ ok: false, error: 'Ordem não encontrada' }, { status: 404 })
+    }
+
+    await prisma.purchase_order.delete({ where: { id } })
+
+    return NextResponse.json({ ok: true })
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : 'Erro ao excluir ordem'
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 })
+  }
+}
