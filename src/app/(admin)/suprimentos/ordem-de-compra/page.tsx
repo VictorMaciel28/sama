@@ -121,12 +121,26 @@ export default function OrdemCompraListPage() {
   const downloadPdf = useCallback(async (id: number) => {
     setPdfLoadingId(id)
     try {
-      const res = await fetch(`/api/suprimentos/ordens-compra/${id}`)
-      const json = await res.json()
+      const [orderRes, pmRes] = await Promise.all([
+        fetch(`/api/suprimentos/ordens-compra/${id}`),
+        fetch('/api/payment-methods'),
+      ])
+      const json = await orderRes.json()
       if (!json?.ok || !json.data) {
         return
       }
-      downloadPurchaseOrderPdf(json.data as PurchaseOrderPdfDetail)
+      let meioPagamentoLabel: ((code: number) => string) | undefined
+      try {
+        const pmJson = await pmRes.json()
+        if (pmJson?.ok && Array.isArray(pmJson.data)) {
+          const rows = pmJson.data as { code: number; name: string }[]
+          meioPagamentoLabel = (code: number) =>
+            rows.find((m) => m.code === code)?.name?.trim() || '—'
+        }
+      } catch {
+        /* mantém undefined; PDF usa "—" no meio de pagamento */
+      }
+      downloadPurchaseOrderPdf(json.data as PurchaseOrderPdfDetail, { meioPagamentoLabel })
     } catch {
       /* noop */
     } finally {

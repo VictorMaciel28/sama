@@ -30,6 +30,17 @@ function toDateOnly(s: string | undefined): Date | null {
   return Number.isNaN(d.getTime()) ? null : d
 }
 
+/** Igual ao front: q×vu + IPI% sobre a base + ICMS em valor. */
+function itemLineTotalDec(it: ItemIn, q: number, vu: number): Prisma.Decimal {
+  const sub = new Prisma.Decimal(q).mul(vu)
+  const ipiPct =
+    it.aliquotaIPI != null && Number.isFinite(Number(it.aliquotaIPI)) ? Number(it.aliquotaIPI) : 0
+  const ipiVal = sub.mul(ipiPct).div(100)
+  const icmsNum =
+    it.valorICMS != null && Number.isFinite(Number(it.valorICMS)) ? Number(it.valorICMS) : 0
+  return sub.add(ipiVal).add(new Prisma.Decimal(icmsNum))
+}
+
 export async function GET(req: Request) {
   try {
     const session = await getServerSession(options as any)
@@ -178,7 +189,7 @@ export async function POST(req: Request) {
               ? new Prisma.Decimal(Number(it.valorICMS))
               : null,
         })
-        bruto = bruto.add(sub)
+        bruto = bruto.add(itemLineTotalDec(it, q, vu))
         continue
       }
 
@@ -190,7 +201,7 @@ export async function POST(req: Request) {
       const codigoTiny = it?.produto?.codigo != null ? String(it.produto.codigo).trim() : ''
 
       const prodLocal = await prisma.product.findUnique({ where: { id: pid } })
-      bruto = bruto.add(sub)
+      bruto = bruto.add(itemLineTotalDec(it, q, vu))
 
       if (prodLocal) {
         itemsPayload.push({

@@ -114,5 +114,14 @@ export function parcelasFromCondicaoText(cond: string, total: number, dataPrevis
     }
   }
 
+  /** Só o número (ex.: "30") = uma parcela em N dias — comum em pedidos. */
+  const soNumero = cond.trim().match(/^(\d{1,4})$/)
+  if (soNumero) {
+    const d = parseInt(soNumero[1], 10)
+    if (d >= 0 && d <= 3650) {
+      return parcelasFromDiasList(total, dataPrevistaYmd, [d])
+    }
+  }
+
   return []
 }
