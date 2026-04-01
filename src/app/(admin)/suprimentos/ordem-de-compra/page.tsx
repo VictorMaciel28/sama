@@ -214,10 +214,6 @@ export default function OrdemCompraListPage() {
               </button>
             </div>
           </div>
-          <div className="small text-muted mb-2">
-            Período opcional: deixe as datas em branco para listar todas as ordens (até 500). Com datas, o filtro usa a{' '}
-            <strong>data</strong> do pedido.
-          </div>
           {listErr && <div className="alert alert-warning py-2 mb-2">{listErr}</div>}
 
           <div className="table-responsive">
