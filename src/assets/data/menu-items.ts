@@ -88,6 +88,13 @@ export const MENU_ITEMS: MenuItemType[] = [
         url: '/suprimentos/notas-fiscais',
         parentKey: 'suprimentos',
       },
+      {
+        key: 'ordem-de-compra',
+        label: 'Ordem de compra',
+        icon: 'ri:shopping-cart-2-line',
+        url: '/suprimentos/ordem-de-compra',
+        parentKey: 'suprimentos',
+      },
     ],
   },
   {

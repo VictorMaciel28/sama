@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import { EMPRESAS_SUPRIMENTOS } from '@/constants/empresas-suprimentos'
 
 type Item = {
   cProd?: string
@@ -11,33 +12,13 @@ type Item = {
   vProd?: string
 }
 
-type CompanyOption = {
-  id: string
-  label: string
-  apiKey: string
-  cnpj: string
-}
-
 export default function NotasFiscaisPage() {
   // const [xmlText, setXmlText] = useState<string | null>(null) // preview removed
   const [error, setError] = useState<string | null>(null)
   const [summary, setSummary] = useState<any | null>(null)
   const [hasSelectedFile, setHasSelectedFile] = useState(false)
-  const companyOptions: CompanyOption[] = [
-    {
-      id: 'ff-lima',
-      label: 'FF Lima Parafusos e Ferramentas',
-      apiKey: '9b6cd0b8379346e7e7384b45f8e45e43cd2c142197b8e37385ea7c20211ec9b5',
-      cnpj: '30.961.214/0001-95',
-    },
-    {
-      id: 'alianca-matriz',
-      label: 'Aliança Mercantil Matriz',
-      apiKey: '505099465fb48df51dc1fc29400cac6b5e11e13864ac630a3cdd3ae9aa208533',
-      cnpj: '43.589.635/0001-89',
-    },
-  ]
-  const [selectedCompany, setSelectedCompany] = useState<CompanyOption | null>(companyOptions[0])
+  const companyOptions = EMPRESAS_SUPRIMENTOS
+  const [selectedCompany, setSelectedCompany] = useState<(typeof companyOptions)[0] | null>(companyOptions[0])
   const [isSending, setIsSending] = useState(false)
   const [sendModal, setSendModal] = useState<{ status: 'success' | 'error'; title: string; message: string } | null>(null)
 
