@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
 import nodemailer from 'nodemailer'
-import puppeteer from 'puppeteer'
+import { renderPlatformOrderPdfBuffer } from '@/lib/platformOrderSharePdf'
 
 type UserAccess = {
   vendorId: string | null
@@ -238,25 +238,6 @@ function buildOrderSummaryHtml(order: any) {
   `
 }
 
-async function renderPdfFromHtml(html: string) {
-  const browser = await puppeteer.launch({
-    args: ['--no-sandbox', '--disable-setuid-sandbox'],
-  })
-  try {
-    const page = await browser.newPage()
-    await page.setContent(html, { waitUntil: 'networkidle0' })
-    const pdf = await page.pdf({
-      format: 'A4',
-      printBackground: true,
-      margin: { top: 24, bottom: 24, left: 24, right: 24 },
-    })
-    await page.close()
-    return pdf
-  } finally {
-    await browser.close()
-  }
-}
-
 function buildMailer() {
   return nodemailer.createTransport({
     host: MAIL_CONFIG.host,
@@ -272,7 +253,7 @@ function buildMailer() {
   })
 }
 
-async function sendOrderEmail(recipient: string, order: any, pdf: Buffer) {
+async function sendOrderEmail(recipient: string, order: any, pdf: Buffer, htmlBody: string) {
   const transporter = buildMailer()
   const subject = `Pedido #${order.numero} - ${order.cliente}`
   const text = `Segue em anexo o resumo do pedido ${order.numero} de ${order.cliente}.`
@@ -293,6 +274,7 @@ async function sendOrderEmail(recipient: string, order: any, pdf: Buffer) {
     to: recipient,
     subject,
     text,
+    html: htmlBody,
     attachments: [
       {
         filename: `pedido-${order.numero}.pdf`,
@@ -330,8 +312,8 @@ export async function POST(req: Request) {
     const userAccess = await resolveUserAccess(session.user.email || null)
     const order = await authorizeOrder(numero, userAccess)
     const html = buildOrderSummaryHtml(order)
-    const pdf = await renderPdfFromHtml(html)
-    await sendOrderEmail(email, order, pdf)
+    const pdf = renderPlatformOrderPdfBuffer(order)
+    await sendOrderEmail(email, order, pdf, html)
 
     return NextResponse.json({ ok: true })
   } catch (error: any) {

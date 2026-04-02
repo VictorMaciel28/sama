@@ -48,6 +48,8 @@ export async function GET() {
           total: Number(r.total),
           status: 'Proposta',
           id_vendedor_externo: r.id_vendedor_externo,
+          /** Necessário ao evoluir proposta → pedido (Tiny exige idContato). */
+          id_client_externo: r.id_client_externo != null ? r.id_client_externo.toString() : null,
           itens: products.map((p) => ({
             produtoId: p.produto_id,
             codigo: p.codigo,
@@ -111,6 +113,11 @@ export async function POST(req: Request) {
     })
     const nextNumero = (maxRow?.numero || 1000) + 1
 
+    const enderecoEntregaJson =
+      body?.endereco_entrega != null && typeof body.endereco_entrega === 'object'
+        ? (body.endereco_entrega as object)
+        : undefined
+
     const created = await prisma.platform_order.create({
       data: {
         numero: nextNumero,
@@ -123,8 +130,37 @@ export async function POST(req: Request) {
         id_vendedor_externo: id_vendedor_externo,
         id_client_externo: id_client_externo,
         client_vendor_externo: client_vendor_externo,
+        ...(enderecoEntregaJson != null ? { endereco_entrega: enderecoEntregaJson } : {}),
       },
     })
+
+    /** Mantém cadastro local alinhado ao endereço informado (uso posterior no Tiny / pedido). */
+    if (id_client_externo && enderecoEntregaJson) {
+      const a = enderecoEntregaJson as Record<string, unknown>
+      const skip = a.endereco_diferente === true
+      if (!skip) {
+        try {
+          const ufRaw = String(a.uf ?? '').trim().toUpperCase().slice(0, 2)
+          const clienteData: Record<string, string> = {}
+          if (a.endereco != null && String(a.endereco).trim() !== '') clienteData.endereco = String(a.endereco).slice(0, 200)
+          if (a.numero != null && String(a.numero).trim() !== '') clienteData.numero = String(a.numero).slice(0, 20)
+          if (a.complemento != null) clienteData.complemento = String(a.complemento).slice(0, 100)
+          if (a.bairro != null && String(a.bairro).trim() !== '') clienteData.bairro = String(a.bairro).slice(0, 100)
+          if (a.cep != null && String(a.cep).trim() !== '')
+            clienteData.cep = String(a.cep).replace(/\D/g, '').slice(0, 20)
+          if (a.cidade != null && String(a.cidade).trim() !== '') clienteData.cidade = String(a.cidade).slice(0, 100)
+          if (ufRaw.length === 2) clienteData.estado = ufRaw
+          if (Object.keys(clienteData).length > 0) {
+            await prisma.cliente.update({
+              where: { external_id: id_client_externo },
+              data: clienteData,
+            })
+          }
+        } catch {
+          /* contato pode não existir localmente ainda */
+        }
+      }
+    }
 
     // Persist any provided items linked to this proposal (do not send to Tiny here)
     try {

@@ -4150,7 +4150,7 @@ puppeteer-core@24.39.1:
     webdriver-bidi-protocol "0.4.1"
     ws "^8.19.0"
 
-puppeteer@^24.31.0, puppeteer@^24.39.1:
+puppeteer@^24.31.0:
   version "24.39.1"
   resolved "https://registry.npmjs.org/puppeteer/-/puppeteer-24.39.1.tgz"
   integrity sha512-68Zc9QpcVvfxp2C+3UL88TyUogEAn5tSylXidbEuEXvhiqK1+v65zeBU5ubinAgEHMGr3dcSYqvYrGtdzsPI3w==

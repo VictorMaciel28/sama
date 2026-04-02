@@ -806,7 +806,18 @@ export default function PedidoFormPage() {
       }
 
       // Apenas salvar localmente na plataforma (pedido)
-      const idContato = selectedClient?.external_id ? Number(selectedClient.external_id) : 0
+      const formExt = form as Record<string, unknown>
+      const idContato =
+        selectedClient?.external_id != null && String(selectedClient.external_id).trim() !== ''
+          ? Number(selectedClient.external_id)
+          : formExt.id_client_externo != null && String(formExt.id_client_externo).trim() !== ''
+            ? Number(String(formExt.id_client_externo).replace(/\D/g, '')) || 0
+            : 0
+      const vendedorIdNum = Number(
+        meVendedor?.id_vendedor_externo ||
+          formExt.id_vendedor_externo ||
+          0
+      )
       const payloadToSend: any = {
         ...form,
         total: totalComDesconto,
@@ -814,7 +825,7 @@ export default function PedidoFormPage() {
         condicao_pagamento: condicaoPagamento,
         idContato,
         vendedor: {
-          id: Number(meVendedor?.id_vendedor_externo || 0),
+          id: Number.isFinite(vendedorIdNum) && vendedorIdNum > 0 ? vendedorIdNum : 0,
         },
       }
       payloadToSend.cliente =
@@ -835,7 +846,7 @@ export default function PedidoFormPage() {
               nome: payloadToSend.cliente.nome || String(form.cliente || '').trim(),
             }
       delete payloadToSend.cnpj
-      delete payloadToSend.id_vendedor_externo
+      /** Não remover `id_vendedor_externo`: o POST /api/pedidos usa esse campo se `vendedor.id` vier zerado. */
       payloadToSend.endereco_entrega = {
         ...deliveryAddress,
         endereco_diferente: isDifferentDeliveryAddress,

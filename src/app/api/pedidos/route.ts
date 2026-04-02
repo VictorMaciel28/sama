@@ -214,12 +214,34 @@ export async function POST(req: Request) {
     const body = await req.json()
     const numeroInput = Number(body?.numero || 0)
     const dataStr = (body?.data || '').toString().slice(0, 10)
-    const cliente = (body?.cliente || '').toString().trim()
+    const cliente =
+      typeof body?.cliente === 'string'
+        ? body.cliente.trim()
+        : typeof body?.cliente === 'object' && body?.cliente != null
+          ? String((body.cliente as { nome?: string }).nome ?? '').trim()
+          : String(body?.cliente ?? '').trim()
     const cnpj = (body?.cnpj || '').toString().trim()
     const total = Number(body?.total || 0)
     const statusStr = (body?.status || 'Pendente').toString()
-    const id_vendedor_externo =
-      body?.vendedor?.id != null ? String(body.vendedor.id).trim() : null
+    /** Mesmo critério de /api/propostas: aceita vendedor.id ou id_vendedor_externo no corpo. */
+    let id_vendedor_externo: string | null = null
+    const vendedorIdBody = body?.vendedor?.id
+    if (vendedorIdBody != null && Number(vendedorIdBody) > 0) {
+      id_vendedor_externo = String(vendedorIdBody).trim()
+    }
+    if (!id_vendedor_externo && body?.id_vendedor_externo != null && String(body.id_vendedor_externo).trim() !== '') {
+      const n = Number(body.id_vendedor_externo)
+      if (Number.isFinite(n) && n > 0) id_vendedor_externo = String(body.id_vendedor_externo).trim()
+    }
+    if (!id_vendedor_externo && userEmail) {
+      const vendSess = await prisma.vendedor.findFirst({
+        where: { email: userEmail },
+        select: { id_vendedor_externo: true },
+      })
+      if (vendSess?.id_vendedor_externo != null && String(vendSess.id_vendedor_externo).trim() !== '') {
+        id_vendedor_externo = String(vendSess.id_vendedor_externo).trim()
+      }
+    }
     const client_vendor_externo: string | null =
       body?.client_vendor_externo != null ? body.client_vendor_externo?.toString?.().trim?.() || null : null
     const forma_recebimento: string | null =
@@ -267,14 +289,98 @@ export async function POST(req: Request) {
     }
 
     const toIsoDate = (s: any) => (s ? String(s).slice(0, 10) : new Date().toISOString().slice(0, 10))
-    const rawCliente = typeof body?.cliente === 'object' ? body?.cliente : null
-    const idContatoRaw = rawCliente?.idContato ?? rawCliente?.external_id ?? body?.idContato ?? 0
-    const idContatoStr = idContatoRaw != null ? String(idContatoRaw).trim() : '0'
-    const idContatoDb = /^\d+$/.test(idContatoStr) && idContatoStr !== '0' ? BigInt(idContatoStr) : null
+    const rawCliente = typeof body?.cliente === 'object' && body?.cliente != null ? body?.cliente : null
+    const idContatoRaw =
+      rawCliente?.idContato ??
+      rawCliente?.external_id ??
+      body?.idContato ??
+      body?.id_client_externo ??
+      0
+    let idContatoStr = idContatoRaw != null && idContatoRaw !== '' ? String(idContatoRaw).trim() : '0'
+    if (idContatoStr && !/^\d+$/.test(idContatoStr)) {
+      const digits = idContatoStr.replace(/\D/g, '')
+      idContatoStr = digits || '0'
+    }
+    let idContatoDb = /^\d+$/.test(idContatoStr) && idContatoStr !== '0' ? BigInt(idContatoStr) : null
     const idContatoNum = Number(idContatoStr)
-    const idContato = Number.isFinite(idContatoNum) && idContatoNum > 0 ? idContatoNum : 0
-    const vendedorTinyId = id_vendedor_externo != null ? Number(id_vendedor_externo) : null
+    let idContato = Number.isFinite(idContatoNum) && idContatoNum > 0 ? idContatoNum : 0
+    const vendedorTinyIdNum = id_vendedor_externo != null ? Number(id_vendedor_externo) : NaN
+    let vendedorTinyId =
+      Number.isFinite(vendedorTinyIdNum) && vendedorTinyIdNum > 0 ? vendedorTinyIdNum : null
+
+    /** Lista/modal de proposta manda payload enxuto: completa contato/vendedor do `platform_order`. */
+    if ((idContato <= 0 || vendedorTinyId == null) && numeroInput > 0) {
+      const existing = await prisma.platform_order.findUnique({
+        where: { numero: numeroInput },
+        select: { id_client_externo: true, id_vendedor_externo: true },
+      })
+      if (existing) {
+        if (idContato <= 0 && existing.id_client_externo != null) {
+          const n = Number(existing.id_client_externo)
+          if (Number.isFinite(n) && n > 0) {
+            idContato = n
+            idContatoDb = existing.id_client_externo
+          }
+        }
+        if (vendedorTinyId == null && existing.id_vendedor_externo) {
+          const n = Number(String(existing.id_vendedor_externo).trim())
+          if (Number.isFinite(n) && n > 0) vendedorTinyId = n
+        }
+      }
+    }
+    if (!id_vendedor_externo && vendedorTinyId != null) {
+      id_vendedor_externo = String(vendedorTinyId)
+    }
+    if (idContato > 0 && idContatoDb == null) {
+      idContatoDb = BigInt(idContato)
+    }
+
     const endereco = endereco_entrega || {}
+
+    /** Preenche endereço com cadastro local do contato; Tiny rejeita `uf: ""`. */
+    type CliAddr = {
+      endereco: string | null
+      numero: string | null
+      complemento: string | null
+      bairro: string | null
+      cep: string | null
+      cidade: string | null
+      estado: string | null
+    } | null
+    let cliAddr: CliAddr = null
+    if (idContato > 0) {
+      try {
+        cliAddr = await prisma.cliente.findUnique({
+          where: { external_id: BigInt(idContato) },
+          select: {
+            endereco: true,
+            numero: true,
+            complemento: true,
+            bairro: true,
+            cep: true,
+            cidade: true,
+            estado: true,
+          },
+        })
+      } catch {
+        cliAddr = null
+      }
+    }
+    const pickStr = (a: unknown, b: unknown) => String(a ?? b ?? '').trim()
+    let ufTiny = pickStr(endereco.uf, cliAddr?.estado)
+      .toUpperCase()
+      .replace(/[^A-Z]/g, '')
+      .slice(0, 2)
+    const enderecoTiny = {
+      endereco: pickStr(endereco.endereco, cliAddr?.endereco),
+      enderecoNro: pickStr(endereco.numero, cliAddr?.numero),
+      complemento: pickStr(endereco.complemento, cliAddr?.complemento),
+      bairro: pickStr(endereco.bairro, cliAddr?.bairro),
+      municipio: pickStr(endereco.cidade, cliAddr?.cidade),
+      cep: pickStr(endereco.cep, cliAddr?.cep).replace(/\D/g, ''),
+      uf: ufTiny,
+    }
+    const ufValida = /^[A-Z]{2}$/.test(enderecoTiny.uf)
 
     const normalizedItems = normalizeItems(body?.itens || [])
     const itensV3 = normalizedItems
@@ -296,6 +402,27 @@ export async function POST(req: Request) {
       )
     }
 
+    if (!idContato || idContato <= 0) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            'Contato Tiny obrigatório (idContato). Informe idContato, id_client_externo ou cliente com id/external_id, ou selecione um cliente cadastrado no Tiny na tela do pedido.',
+        },
+        { status: 400 }
+      )
+    }
+    if (vendedorTinyId == null) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error:
+            'Vendedor Tiny obrigatório. Envie vendedor.id ou id_vendedor_externo, ou use um usuário vendedor vinculado no sistema.',
+        },
+        { status: 400 }
+      )
+    }
+
     const pedidoV3: any = {
       data: toIsoDate(body?.data),
       valorDesconto: 0,
@@ -305,15 +432,10 @@ export async function POST(req: Request) {
       ecommerce: {
         numeroPedidoEcommerce: String(body?.numero || numeroInput || ''),
       },
-      enderecoEntrega: {
-        endereco: endereco?.endereco || '',
-        enderecoNro: endereco?.numero || '',
-        complemento: endereco?.complemento || '',
-        bairro: endereco?.bairro || '',
-        municipio: endereco?.cidade || '',
-        cep: endereco?.cep || '',
-        uf: endereco?.uf || '',
-      },
+    }
+    /** Só envia se UF for 2 letras (API Tiny: "UF inválida" para string vazia). */
+    if (ufValida) {
+      pedidoV3.enderecoEntrega = enderecoTiny
     }
     pedidoV3.idContato = idContato
     pedidoV3.vendedor = { id: vendedorTinyId }
