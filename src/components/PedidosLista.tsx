@@ -488,16 +488,18 @@ type ShareTarget = {
         actions={
           <div className="d-flex align-items-center gap-2">
             {entity === 'pedido' && (
-              <Button size="sm" variant="outline-primary" onClick={syncPedidos} disabled={isSyncingPedidos}>
-                {isSyncingPedidos ? (
-                  <>
-                    <Spinner animation="border" size="sm" className="me-2" />
-                    Sincronizando
-                  </>
-                ) : (
-                  'Sincronizar Pedidos'
-                )}
-              </Button>
+              <>
+                {/* <Button size="sm" variant="outline-primary" onClick={syncPedidos} disabled={isSyncingPedidos}>
+                  {isSyncingPedidos ? (
+                    <>
+                      <Spinner animation="border" size="sm" className="me-2" />
+                      Sincronizando
+                    </>
+                  ) : (
+                    'Sincronizar Pedidos'
+                  )}
+                </Button> */}
+              </>
             )}
             <Button size="sm" onClick={() => router.push(newPath)}>
               Novo {entity === 'proposta' ? 'Proposta' : 'Pedido'}
