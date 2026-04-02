@@ -35,6 +35,26 @@ function tinyTokenErrorNeedsReauth(tokenJson: unknown): boolean {
   return false
 }
 
+/**
+ * Lê o `exp` do access token JWT (segundos Unix → ms).
+ * Útil quando `token_expires_at` no MySQL foi preenchido manualmente e não bate com o JWT.
+ */
+function accessTokenJwtExpMs(accessToken: string | null | undefined): number | null {
+  if (!accessToken) return null
+  const parts = accessToken.split('.')
+  if (parts.length < 2) return null
+  try {
+    const b64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const pad = b64.length % 4 === 0 ? '' : '='.repeat(4 - (b64.length % 4))
+    const json = Buffer.from(b64 + pad, 'base64').toString('utf8')
+    const payload = JSON.parse(json) as { exp?: number }
+    const exp = Number(payload.exp)
+    return Number.isFinite(exp) ? exp * 1000 : null
+  } catch {
+    return null
+  }
+}
+
 export async function getActiveTinyOAuthAccount() {
   return prisma.tiny_oauth_account.findFirst({
     where: { active: true },
@@ -120,17 +140,21 @@ export async function getValidTinyAccessToken(accountId?: number) {
 
   const slackMs = 60_000
   const nowMs = Date.now()
-  const expMs = account.token_expires_at ? account.token_expires_at.getTime() : null
-  const expired =
-    !account.token_expires_at || account.token_expires_at.getTime() <= nowMs + slackMs
+  const dbExpMs = account.token_expires_at ? account.token_expires_at.getTime() : null
+  const jwtExpMs = accessTokenJwtExpMs(account.access_token)
+  /** O que expirar primeiro: coluna do banco ou claim `exp` do JWT (evita INSERT manual incoerente). */
+  const expMs =
+    dbExpMs != null && jwtExpMs != null ? Math.min(dbExpMs, jwtExpMs) : dbExpMs ?? jwtExpMs
+  const expired = !expMs || expMs <= nowMs + slackMs
 
   if (tinyOAuthDebugEnabled()) {
     const msUntilExpiry = expMs != null ? expMs - nowMs : null
     console.log('[tiny-oauth] getValidTinyAccessToken', {
       accountId: account.id,
       nowIso: new Date(nowMs).toISOString(),
-      /** Valor vindo do Prisma (interpretado em Date no fuso do runtime Node). */
-      tokenExpiresAtIso: account.token_expires_at?.toISOString() ?? null,
+      tokenExpiresAtDbIso: account.token_expires_at?.toISOString() ?? null,
+      accessTokenJwtExpIso: jwtExpMs != null ? new Date(jwtExpMs).toISOString() : null,
+      effectiveExpIso: expMs != null ? new Date(expMs).toISOString() : null,
       msUntilExpiry,
       slackMs,
       expiredComputed: expired,
