@@ -423,7 +423,7 @@ export default function PedidoFormPage() {
   const addFromCatalog = (p: CatalogItem) => {
     ;(async () => {
       try {
-        const currentQty = getQtdInOrderBySku(p.codigo)
+        const currentQty = getQtdInOrderForCatalogRow(p)
         const { maxAllowed } = await getAvailableMaxForProduct(p.id)
         const nextQty = roundQty(currentQty + 1)
         if (nextQty > maxAllowed) {
@@ -432,7 +432,7 @@ export default function PedidoFormPage() {
         }
         // proceed to add
         setItens((arr) => {
-          const idx = arr.findIndex((it) => (it.sku || '').toLowerCase() === (p.codigo || '').toLowerCase())
+          const idx = findOrderItemIndexForCatalog(p, arr)
           if (idx >= 0) {
             const next = [...arr]
             next[idx] = {
@@ -467,7 +467,7 @@ export default function PedidoFormPage() {
 
   const removeFromCatalog = (p: CatalogItem) => {
     setItens((arr) => {
-      const idx = arr.findIndex((it) => (it.sku || '').toLowerCase() === (p.codigo || '').toLowerCase())
+      const idx = findOrderItemIndexForCatalog(p, arr)
       if (idx < 0) return arr
       const curr = arr[idx]
       const next = [...arr]
@@ -485,7 +485,12 @@ export default function PedidoFormPage() {
       const qty = roundQty(qtyRaw)
       if (qty <= 0) {
         setItens((arr) =>
-          arr.filter((it) => (it.sku || '').toLowerCase() !== (p.codigo || '').toLowerCase())
+          arr.filter((it) => {
+            if (Number(p.id) > 0 && Number(it.produtoId || 0) === Number(p.id)) return false
+            const code = (p.codigo || '').trim().toLowerCase()
+            if (code && (it.sku || '').toLowerCase() === code) return false
+            return true
+          })
         )
         setCatalogQtyError(null)
         return
@@ -498,7 +503,7 @@ export default function PedidoFormPage() {
       }
 
       setItens((arr) => {
-        const idx = arr.findIndex((it) => (it.sku || '').toLowerCase() === (p.codigo || '').toLowerCase())
+        const idx = findOrderItemIndexForCatalog(p, arr)
         if (idx >= 0) {
           const next = [...arr]
           next[idx] = { ...next[idx], quantidade: qty, produtoId: next[idx].produtoId ?? p.id }
@@ -582,6 +587,79 @@ export default function PedidoFormPage() {
     if (!sku) return 0
     const s = (sku || '').toLowerCase()
     return itens.filter((it) => (it.sku || '').toLowerCase() === s).reduce((acc, it) => acc + (it.quantidade || 0), 0)
+  }
+
+  const getQtdInOrderForCatalogRow = (p: CatalogItem) => {
+    const pid = Number(p.id || 0)
+    if (pid > 0) return getQtdInOrderByProductId(pid)
+    return getQtdInOrderBySku(p.codigo)
+  }
+
+  /** Match catálogo ↔ linha do pedido: prioriza produtoId, depois SKU. */
+  const findOrderItemIndexForCatalog = (p: CatalogItem, arr: ItemPedido[]) => {
+    const pid = Number(p.id || 0)
+    if (pid > 0) {
+      const idx = arr.findIndex((it) => Number(it.produtoId || 0) === pid)
+      if (idx >= 0) return idx
+    }
+    const code = (p.codigo || '').trim().toLowerCase()
+    if (code) {
+      return arr.findIndex((it) => (it.sku || '').toLowerCase() === code)
+    }
+    return -1
+  }
+
+  /** Limite total de unidades do produto no pedido (respeita estoque e qtde já comprometida no pedido). */
+  const getMaxTotalQtyForProductLine = async (produtoId: number, lineId: number) => {
+    const line = itens.find((it) => it.id === lineId)
+    const oldQty = Number(line?.quantidade || 0)
+    const sumOthers = itens
+      .filter((it) => it.id !== lineId && Number(it.produtoId || 0) === produtoId)
+      .reduce((a, it) => a + Number(it.quantidade || 0), 0)
+    const currentTotal = sumOthers + oldQty
+    try {
+      const est = await fetchJsonCached(`/api/produtos/${produtoId}/estoque`, 4000)
+      const stock = est?.totalEstoque != null ? Number(est.totalEstoque) : null
+      if (stock == null || !Number.isFinite(stock) || stock < 0) {
+        return { maxTotal: currentTotal }
+      }
+      return { maxTotal: Math.max(currentTotal, stock) }
+    } catch {
+      return { maxTotal: currentTotal }
+    }
+  }
+
+  const setQtyForLineItem = (lineId: number, qtyRaw: number) => {
+    void (async () => {
+      const qty = roundQty(qtyRaw)
+      const line = itens.find((it) => it.id === lineId)
+      if (!line) return
+      if (qty <= 0) {
+        removeItem(lineId)
+        setCatalogQtyError(null)
+        return
+      }
+      const pid = Number(line.produtoId || 0)
+      if (pid > 0) {
+        const { maxTotal } = await getMaxTotalQtyForProductLine(pid, lineId)
+        const sumOthers = itens
+          .filter((it) => it.id !== lineId && Number(it.produtoId || 0) === pid)
+          .reduce((a, it) => a + Number(it.quantidade || 0), 0)
+        const maxForLine = maxTotal - sumOthers
+        if (qty > maxForLine) {
+          setCatalogQtyError(`Estoque não disponível. Máximo permitido nesta linha: ${maxForLine}`)
+          return
+        }
+      }
+      setItens((arr) => {
+        const idx = arr.findIndex((it) => it.id === lineId)
+        if (idx < 0) return arr
+        const next = [...arr]
+        next[idx] = { ...next[idx], quantidade: qty }
+        return next
+      })
+      setCatalogQtyError(null)
+    })()
   }
 
   const handleChange = (key: keyof Pedido, value: string | number | PedidoStatus) => {
@@ -1313,6 +1391,43 @@ export default function PedidoFormPage() {
                 -moz-appearance: textfield;
                 appearance: textfield;
               }
+              /* dialogClassName aplica no próprio .modal-dialog (não em ancestral) */
+              .modal-dialog.pedido-modal-wide {
+                max-width: 80vw;
+                width: 80vw;
+                margin: 1.75rem auto;
+              }
+              /*
+                O Bootstrap centraliza o .modal-dialog no viewport inteiro; o admin usa .page-content
+                com margin-left igual à largura do menu. Padding-left no .modal reproduz isso e alinha
+                o centro do modal com o formulário (e não com a tela cheia).
+              */
+              .modal.pedido-modal-align-page {
+                padding-left: var(--bs-main-nav-width, 260px);
+              }
+              html[data-menu-size='condensed'] .modal.pedido-modal-align-page,
+              html[data-menu-size='sm-hover'] .modal.pedido-modal-align-page,
+              html[data-menu-size='sm-hover-active'] .modal.pedido-modal-align-page {
+                padding-left: var(--bs-main-nav-width-sm, 75px);
+              }
+              html[data-menu-size='hidden']:not(.sidebar-enable) .modal.pedido-modal-align-page {
+                padding-left: 0;
+              }
+              html[data-menu-size='hidden'].sidebar-enable .modal.pedido-modal-align-page {
+                padding-left: var(--bs-main-nav-width, 260px);
+              }
+              .pedido-line-items-table {
+                table-layout: fixed;
+                width: 100%;
+              }
+              .pedido-line-items-table th,
+              .pedido-line-items-table td {
+                vertical-align: middle;
+                word-wrap: break-word;
+              }
+              .pedido-line-items-table .col-nome {
+                word-break: break-word;
+              }
             `}</style>
             <Col lg={4}>
               <Form.Label>Cliente</Form.Label>
@@ -1492,8 +1607,8 @@ export default function PedidoFormPage() {
               ) : (
                 <div className="list-group list-group-flush">
                   {displayedCatalog.map((p) => (
-                    <div key={p.id} className="list-group-item py-2 d-flex justify-content-between align-items-center">
-                      <div className="me-2">
+                    <div key={`${p.id}-${p.codigo || 'x'}`} className="list-group-item py-2 d-flex justify-content-between align-items-center gap-2">
+                      <div className="me-2 flex-grow-1 min-w-0">
                         <div className="fw-semibold small">{p.nome}</div>
                         <div className="text-muted small">SKU: {p.codigo || '-'}</div>
                         {p.preco != null && (
@@ -1506,22 +1621,22 @@ export default function PedidoFormPage() {
                           </div>
                         )}
                       </div>
-                      <div className="d-flex gap-1">
+                      <div className="d-flex gap-1 flex-shrink-0 align-items-center">
                         <Button variant="outline-secondary" size="sm" title="Detalhes" onClick={() => openCatalogDetail(p)}>
                           <IconifyIcon icon="ri:search-line" />
                         </Button>
-                        <Button variant="outline-secondary" size="sm" title="Diminuir 1" onClick={() => setQtyForCatalogItem(p, getQtdInOrderBySku(p.codigo) - 1)}>
+                        <Button variant="outline-secondary" size="sm" title="Diminuir 1" onClick={() => setQtyForCatalogItem(p, getQtdInOrderForCatalogRow(p) - 1)}>
                           <IconifyIcon icon="ri:subtract-line" />
                         </Button>
                         <Form.Control
                           size="sm"
                           type="number"
-                          inputMode="decimal"
+                          inputMode="numeric"
                           step={1}
                           min={0}
                           className="qty-input"
                           style={{ width: 64 }}
-                          value={getQtdInOrderBySku(p.codigo) || 0}
+                          value={getQtdInOrderForCatalogRow(p) || 0}
                           onClick={(e) => e.stopPropagation()}
                           onChange={(e) => {
                             const v = Number(e.target.value)
@@ -1529,7 +1644,58 @@ export default function PedidoFormPage() {
                             setQtyForCatalogItem(p, v)
                           }}
                         />
-                        <Button variant="primary" size="sm" title="Aumentar 1" onClick={() => setQtyForCatalogItem(p, getQtdInOrderBySku(p.codigo) + 1)}>
+                        <Button variant="primary" size="sm" title="Aumentar 1" onClick={() => setQtyForCatalogItem(p, getQtdInOrderForCatalogRow(p) + 1)}>
+                          <IconifyIcon icon="ri:add-line" />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="mt-2 border rounded d-md-none" style={{ maxHeight: 360, overflowY: 'auto' }}>
+              {catalogLoading ? (
+                <div className="p-2 small text-muted">Carregando produtos...</div>
+              ) : displayedCatalog.length === 0 ? (
+                <div className="p-2 small text-muted">Nenhum produto encontrado.</div>
+              ) : (
+                <div className="list-group list-group-flush">
+                  {displayedCatalog.map((p) => (
+                    <div key={`m-${p.id}-${p.codigo || 'x'}`} className="list-group-item py-2">
+                      <div className="fw-semibold small">{p.nome}</div>
+                      <div className="text-muted small">SKU: {p.codigo || '-'}</div>
+                      {p.preco != null && (
+                        <div className="text-muted small mb-2">
+                          Preço:{' '}
+                          {Number(((p.preco || 0) * (1 + markupPct)) || 0).toLocaleString('pt-BR', {
+                            style: 'currency',
+                            currency: 'BRL',
+                          })}
+                        </div>
+                      )}
+                      <div className="d-flex gap-1 align-items-center flex-wrap">
+                        <Button variant="outline-secondary" size="sm" title="Detalhes" onClick={() => openCatalogDetail(p)}>
+                          <IconifyIcon icon="ri:search-line" />
+                        </Button>
+                        <Button variant="outline-secondary" size="sm" title="Diminuir 1" onClick={() => setQtyForCatalogItem(p, getQtdInOrderForCatalogRow(p) - 1)}>
+                          <IconifyIcon icon="ri:subtract-line" />
+                        </Button>
+                        <Form.Control
+                          size="sm"
+                          type="number"
+                          inputMode="numeric"
+                          step={1}
+                          min={0}
+                          className="qty-input"
+                          style={{ width: 64 }}
+                          value={getQtdInOrderForCatalogRow(p) || 0}
+                          onChange={(e) => {
+                            const v = Number(e.target.value)
+                            if (!Number.isFinite(v)) return
+                            setQtyForCatalogItem(p, v)
+                          }}
+                        />
+                        <Button variant="primary" size="sm" title="Aumentar 1" onClick={() => setQtyForCatalogItem(p, getQtdInOrderForCatalogRow(p) + 1)}>
                           <IconifyIcon icon="ri:add-line" />
                         </Button>
                       </div>
@@ -1862,24 +2028,34 @@ export default function PedidoFormPage() {
       </Modal>
 
       {/* Modal: Lista completa de itens (abre pela lista rolável) */}
-      <Modal show={showCatalogListModal} onHide={() => setShowCatalogListModal(false)} size="lg" centered>
+      <Modal
+        className="pedido-modal-align-page"
+        show={showCatalogListModal}
+        onHide={() => setShowCatalogListModal(false)}
+        centered
+        scrollable
+        dialogClassName="pedido-modal-wide"
+      >
         <Modal.Header closeButton>
           <Modal.Title>Lista de itens</Modal.Title>
         </Modal.Header>
-        <Modal.Body>
-          <div className="table-responsive d-none d-md-block" style={{ maxWidth: '100%', overflowX: 'auto', overflowY: 'auto', maxHeight: '60vh' }}>
-            <Table hover className="mb-0">
+        <Modal.Body className="pt-0">
+          {catalogQtyError && (
+            <div className="text-danger small py-2">{catalogQtyError}</div>
+          )}
+          <div className="d-none d-md-block" style={{ overflowX: 'hidden', overflowY: 'auto', maxHeight: 'min(72vh, 720px)' }}>
+            <Table hover size="sm" className="mb-0 pedido-line-items-table">
               <thead>
                 <tr>
-                  <th style={{ width: 70 }}>N°</th>
-                  <th style={{ minWidth: 360 }}>Nome</th>
-                  <th style={{ width: 120 }}>SKU</th>
-                  <th style={{ width: 100 }}>Qtde</th>
-                  <th style={{ width: 90 }}>Unidade</th>
-                  <th style={{ width: 100 }}>Estoque</th>
-                  <th style={{ width: 130 }}>Preço un</th>
-                  <th style={{ width: 150 }}>Total</th>
-                  <th style={{ width: 120 }}></th>
+                  <th style={{ width: '3%' }}>N°</th>
+                  <th className="col-nome" style={{ width: '26%' }}>Nome</th>
+                  <th style={{ width: '9%' }}>SKU</th>
+                  <th style={{ width: '14%' }}>Qtde</th>
+                  <th style={{ width: '6%' }}>Un.</th>
+                  <th style={{ width: '6%' }}>Est.</th>
+                  <th style={{ width: '10%' }}>Preço un.</th>
+                  <th style={{ width: '10%' }}>Total</th>
+                  <th style={{ width: '8%' }} className="text-end">Ações</th>
                 </tr>
               </thead>
               <tbody>
@@ -1888,46 +2064,70 @@ export default function PedidoFormPage() {
                   return (
                     <tr key={item.id}>
                       <td>{idx + 1}</td>
-                      <td>
-                        <div className="position-relative">
-                          <div className="d-flex gap-2 align-items-center">
-                            {item.imagemUrl ? (
-                              <img
-                                src={item.imagemUrl}
-                                alt="Produto"
-                                style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: 6, cursor: 'pointer' }}
-                                onClick={() => { setPreviewUrl(item.imagemUrl || null); setShowPreview(true) }}
-                                className="flex-shrink-0"
-                              />
-                            ) : null}
-                            <div className="flex-grow-1">{item.nome}</div>
-                          </div>
+                      <td className="col-nome">
+                        <div className="d-flex gap-2 align-items-center">
+                          {item.imagemUrl ? (
+                            <img
+                              src={item.imagemUrl}
+                              alt="Produto"
+                              style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6, cursor: 'pointer' }}
+                              onClick={() => { setPreviewUrl(item.imagemUrl || null); setShowPreview(true) }}
+                              className="flex-shrink-0"
+                            />
+                          ) : null}
+                          <span>{item.nome}</span>
                         </div>
                       </td>
+                      <td className="small">{item.sku || '—'}</td>
                       <td>
-                        {item.sku || '-'}
-                      </td>
-                      <td>
-                        {item.quantidade}
-                      </td>
-                      <td>
-                        {item.unidade}
-                      </td>
-                      <td>
-                        {item.estoque ?? 0}
-                      </td>
-                      <td>
-                        {item.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                      </td>
-                      <td>
-                        {totalItem.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                      </td>
-                      <td className="text-center">
-                        <div className="d-flex justify-content-center gap-2">
-                          <Button variant="outline-danger" size="sm" onClick={() => removeItem(item.id)} title="Remover">
-                            <IconifyIcon icon="ri:delete-bin-line" />
+                        <div className="d-flex gap-1 align-items-center justify-content-center">
+                          <Button
+                            variant="outline-secondary"
+                            size="sm"
+                            className="px-2 py-0"
+                            title="Diminuir 1"
+                            onClick={() => setQtyForLineItem(item.id, item.quantidade - 1)}
+                          >
+                            <IconifyIcon icon="ri:subtract-line" />
+                          </Button>
+                          <Form.Control
+                            size="sm"
+                            type="number"
+                            inputMode="numeric"
+                            step={1}
+                            min={0}
+                            className="qty-input text-center"
+                            style={{ width: 56 }}
+                            value={item.quantidade}
+                            onChange={(e) => {
+                              const v = Number(e.target.value)
+                              if (!Number.isFinite(v)) return
+                              setQtyForLineItem(item.id, v)
+                            }}
+                          />
+                          <Button
+                            variant="primary"
+                            size="sm"
+                            className="px-2 py-0"
+                            title="Aumentar 1"
+                            onClick={() => setQtyForLineItem(item.id, item.quantidade + 1)}
+                          >
+                            <IconifyIcon icon="ri:add-line" />
                           </Button>
                         </div>
+                      </td>
+                      <td>{item.unidade}</td>
+                      <td>{item.estoque ?? '—'}</td>
+                      <td className="small">
+                        {item.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </td>
+                      <td className="small fw-semibold">
+                        {totalItem.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                      </td>
+                      <td className="text-end">
+                        <Button variant="outline-danger" size="sm" onClick={() => removeItem(item.id)} title="Remover">
+                          <IconifyIcon icon="ri:delete-bin-line" />
+                        </Button>
                       </td>
                     </tr>
                   )
@@ -1968,9 +2168,41 @@ export default function PedidoFormPage() {
                     </Col>
                   </Row>
                   <Row className="g-2 mt-1">
-                    <Col xs={6}>
+                    <Col xs={12}>
                       <Form.Label className="mb-1">Qtde</Form.Label>
-                      <div className="form-control-plaintext">{item.quantidade}</div>
+                      <div className="d-flex gap-1 align-items-center">
+                        <Button
+                          variant="outline-secondary"
+                          size="sm"
+                          title="Diminuir 1"
+                          onClick={() => setQtyForLineItem(item.id, item.quantidade - 1)}
+                        >
+                          <IconifyIcon icon="ri:subtract-line" />
+                        </Button>
+                        <Form.Control
+                          size="sm"
+                          type="number"
+                          inputMode="numeric"
+                          step={1}
+                          min={0}
+                          className="qty-input text-center"
+                          style={{ width: 64 }}
+                          value={item.quantidade}
+                          onChange={(e) => {
+                            const v = Number(e.target.value)
+                            if (!Number.isFinite(v)) return
+                            setQtyForLineItem(item.id, v)
+                          }}
+                        />
+                        <Button
+                          variant="primary"
+                          size="sm"
+                          title="Aumentar 1"
+                          onClick={() => setQtyForLineItem(item.id, item.quantidade + 1)}
+                        >
+                          <IconifyIcon icon="ri:add-line" />
+                        </Button>
+                      </div>
                     </Col>
                     <Col xs={6}>
                       <Form.Label className="mb-1">Unidade</Form.Label>
@@ -2012,7 +2244,14 @@ export default function PedidoFormPage() {
         </Modal.Footer>
       </Modal>
 
-      <Modal show={showHistory} onHide={closeHistory} size="lg" centered>
+      <Modal
+        className="pedido-modal-align-page"
+        show={showHistory}
+        onHide={closeHistory}
+        centered
+        scrollable
+        dialogClassName="pedido-modal-wide"
+      >
         <Modal.Header closeButton>
           <Modal.Title>Histórico de produtos</Modal.Title>
         </Modal.Header>
@@ -2024,37 +2263,92 @@ export default function PedidoFormPage() {
           ) : historyItems.length === 0 ? (
             <div className="text-muted small">Nenhum histórico encontrado para este cliente.</div>
           ) : (
-            <div className="table-responsive">
-              <Table hover size="sm" className="mb-0">
-                <thead>
-                  <tr>
-                    <th style={{ width: 140 }}>Data da venda</th>
-                    <th style={{ width: 140 }}>Código (SKU)</th>
-                    <th>Nome</th>
-                    <th style={{ width: 120 }}>Preço</th>
-                    <th style={{ width: 100 }}>Qtd</th>
-                    <th style={{ width: 140 }}>Nº Pedido</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {historyItems.map((h) => {
-                    const variant = getRowVariantByDate(h.created_at)
-                    const precoNum = typeof h.preco === 'string' ? Number(h.preco) : (h.preco || 0)
-                    const qtdNum = typeof h.quantidade === 'string' ? Number(h.quantidade) : h.quantidade
-                    return (
-                      <tr key={h.id} className={`table-${variant}`}>
-                        <td>{new Date(h.created_at).toLocaleDateString('pt-BR')}</td>
-                        <td>{h.codigo || '-'}</td>
-                        <td>{h.nome || '-'}</td>
-                        <td>{Number(precoNum || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
-                        <td>{Number(qtdNum || 0)}</td>
-                        <td>{h.tiny_orders?.numero_pedido || '-'}</td>
-                      </tr>
-                    )
-                  })}
-                </tbody>
-              </Table>
-            </div>
+            <>
+              {catalogQtyError && (
+                <div className="text-danger small pb-2">{catalogQtyError}</div>
+              )}
+              <div style={{ overflowX: 'hidden', overflowY: 'auto', maxHeight: 'min(70vh, 640px)' }}>
+                <Table hover size="sm" className="mb-0 pedido-line-items-table">
+                  <thead>
+                    <tr>
+                      <th style={{ width: '10%' }}>Data</th>
+                      <th style={{ width: '10%' }}>SKU</th>
+                      <th style={{ width: '22%' }}>Nome</th>
+                      <th style={{ width: '9%' }}>Preço</th>
+                      <th style={{ width: '7%' }}>Qtd.</th>
+                      <th style={{ width: '9%' }}>Nº ped.</th>
+                      <th style={{ width: '18%' }}>Neste pedido</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {historyItems.map((h) => {
+                      const variant = getRowVariantByDate(h.created_at)
+                      const precoNum = typeof h.preco === 'string' ? Number(h.preco) : (h.preco || 0)
+                      const qtdNum = typeof h.quantidade === 'string' ? Number(h.quantidade) : h.quantidade
+                      const histAsCatalog: CatalogItem = {
+                        id: h.produto_id,
+                        nome: h.nome || '',
+                        codigo: h.codigo || undefined,
+                        preco: Number.isFinite(Number(precoNum)) ? Number(precoNum) : undefined,
+                      }
+                      const podeEditarPedido = Number(h.produto_id) > 0
+                      const qtdPedido = getQtdInOrderForCatalogRow(histAsCatalog)
+                      return (
+                        <tr key={h.id} className={`table-${variant}`}>
+                          <td className="small">{new Date(h.created_at).toLocaleDateString('pt-BR')}</td>
+                          <td className="small">{h.codigo || '—'}</td>
+                          <td className="small col-nome">{h.nome || '—'}</td>
+                          <td className="small">{Number(precoNum || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
+                          <td className="small">{Number(qtdNum || 0)}</td>
+                          <td className="small">{h.tiny_orders?.numero_pedido || '—'}</td>
+                          <td>
+                            {podeEditarPedido ? (
+                              <div className="d-flex gap-1 align-items-center flex-wrap justify-content-end">
+                                <Button
+                                  variant="outline-secondary"
+                                  size="sm"
+                                  className="px-2 py-0"
+                                  title="Diminuir 1 no pedido atual"
+                                  onClick={() => setQtyForCatalogItem(histAsCatalog, qtdPedido - 1)}
+                                >
+                                  <IconifyIcon icon="ri:subtract-line" />
+                                </Button>
+                                <Form.Control
+                                  size="sm"
+                                  type="number"
+                                  inputMode="numeric"
+                                  step={1}
+                                  min={0}
+                                  className="qty-input text-center"
+                                  style={{ width: 52 }}
+                                  value={qtdPedido}
+                                  onChange={(e) => {
+                                    const v = Number(e.target.value)
+                                    if (!Number.isFinite(v)) return
+                                    setQtyForCatalogItem(histAsCatalog, v)
+                                  }}
+                                />
+                                <Button
+                                  variant="primary"
+                                  size="sm"
+                                  className="px-2 py-0"
+                                  title="Aumentar 1 no pedido atual"
+                                  onClick={() => setQtyForCatalogItem(histAsCatalog, qtdPedido + 1)}
+                                >
+                                  <IconifyIcon icon="ri:add-line" />
+                                </Button>
+                              </div>
+                            ) : (
+                              <span className="text-muted small">—</span>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </Table>
+              </div>
+            </>
           )}
         </Modal.Body>
         <Modal.Footer>
