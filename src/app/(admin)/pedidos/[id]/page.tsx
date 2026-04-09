@@ -2267,6 +2267,57 @@ export default function PedidoFormPage() {
               {catalogQtyError && (
                 <div className="text-danger small pb-2">{catalogQtyError}</div>
               )}
+              <div
+                className="d-flex flex-wrap gap-3 align-items-start small text-body-secondary mb-3 pb-2 border-bottom"
+                role="note"
+                aria-label="Legenda das cores por idade da venda"
+              >
+                <div className="d-flex align-items-center gap-2">
+                  <span
+                    className="d-inline-block rounded flex-shrink-0"
+                    style={{
+                      width: 14,
+                      height: 14,
+                      backgroundColor: 'var(--bs-success-bg-subtle, #d1e7dd)',
+                      border: '1px solid var(--bs-success-border-subtle, #a3cfbb)',
+                    }}
+                    aria-hidden
+                  />
+                  <span>
+                    <strong className="text-body">Verde:</strong> venda nos últimos 30 dias (até cerca de 1 mês).
+                  </span>
+                </div>
+                <div className="d-flex align-items-center gap-2">
+                  <span
+                    className="d-inline-block rounded flex-shrink-0"
+                    style={{
+                      width: 14,
+                      height: 14,
+                      backgroundColor: 'var(--bs-warning-bg-subtle, #fff3cd)',
+                      border: '1px solid var(--bs-warning-border-subtle, #ffe69c)',
+                    }}
+                    aria-hidden
+                  />
+                  <span>
+                    <strong className="text-body">Laranja:</strong> venda entre 31 dias e 3 meses atrás.
+                  </span>
+                </div>
+                <div className="d-flex align-items-center gap-2">
+                  <span
+                    className="d-inline-block rounded flex-shrink-0"
+                    style={{
+                      width: 14,
+                      height: 14,
+                      backgroundColor: 'var(--bs-danger-bg-subtle, #f8d7da)',
+                      border: '1px solid var(--bs-danger-border-subtle, #f1aeb5)',
+                    }}
+                    aria-hidden
+                  />
+                  <span>
+                    <strong className="text-body">Vermelho:</strong> venda há mais de 3 meses.
+                  </span>
+                </div>
+              </div>
               <div style={{ overflowX: 'hidden', overflowY: 'auto', maxHeight: 'min(70vh, 640px)' }}>
                 <Table hover size="sm" className="mb-0 pedido-line-items-table">
                   <thead>
