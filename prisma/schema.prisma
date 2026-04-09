@@ -183,6 +183,7 @@ model platform_order {
   id_vendedor_externo  String?       @db.VarChar(100)
   id_client_externo    BigInt?       @db.UnsignedBigInt
   client_vendor_externo String?      @db.VarChar(100)
+  sistema_origem        String        @default("sama") @db.VarChar(20)
   tiny_id              Int?          @unique
   id_nota_fiscal       String?       @db.VarChar(100)
   created_at           DateTime      @default(now()) @db.DateTime(0)

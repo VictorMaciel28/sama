@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 const TINY_OAUTH_TOKEN_URL =
   'https://accounts.tiny.com.br/realms/tiny/protocol/openid-connect/token'
 const TINY_V3_BASE_URL = 'https://api.tiny.com.br/public-api/v3'
+const TINY_V2_BASE_URL = 'https://api.tiny.com.br/api2'
 
 /** Refresh token revogado/expirado — só resolve com novo fluxo OAuth (authorization code). */
 export class TinyOAuthReauthRequiredError extends Error {
@@ -211,6 +212,76 @@ export async function tinyV3Fetch(
   }
   res = await fetch(url, { ...init, headers: retryHeaders })
   return res
+}
+
+export async function tinyV2Post(
+  servicePath: string,
+  params: Record<string, string | number | null | undefined> = {}
+) {
+  const account = await getActiveTinyOAuthAccount()
+  if (!account) throw new Error('Conta OAuth Tiny ativa não encontrada')
+  if (!account.apiv2_key) {
+    throw new Error('Chave API v2 do Tiny não configurada para a conta ativa')
+  }
+
+  const form = new URLSearchParams()
+  form.set('token', account.apiv2_key)
+  form.set('formato', 'JSON')
+  for (const [key, value] of Object.entries(params)) {
+    if (value == null || value === '') continue
+    form.set(key, String(value))
+  }
+
+  const normalizedPath = servicePath.replace(/^\/+/, '')
+  const url = `${TINY_V2_BASE_URL}/${normalizedPath}`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  })
+  const json = await res.json().catch(() => null)
+  if (!res.ok) {
+    throw new Error(`tiny_v2_request_failed: status=${res.status}`)
+  }
+  return json
+}
+
+export async function tinyV2PostWithJsonParam(
+  servicePath: string,
+  params: Record<string, unknown> = {}
+) {
+  const account = await getActiveTinyOAuthAccount()
+  if (!account) throw new Error('Conta OAuth Tiny ativa não encontrada')
+  if (!account.apiv2_key) {
+    throw new Error('Chave API v2 do Tiny não configurada para a conta ativa')
+  }
+
+  const form = new URLSearchParams()
+  form.set('token', account.apiv2_key)
+  form.set('formato', 'JSON')
+  for (const [key, value] of Object.entries(params)) {
+    if (value == null) continue
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      const s = String(value)
+      if (!s) continue
+      form.set(key, s)
+      continue
+    }
+    form.set(key, JSON.stringify(value))
+  }
+
+  const normalizedPath = servicePath.replace(/^\/+/, '')
+  const url = `${TINY_V2_BASE_URL}/${normalizedPath}`
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: form.toString(),
+  })
+  const json = await res.json().catch(() => null)
+  if (!res.ok) {
+    throw new Error(`tiny_v2_request_failed: status=${res.status}`)
+  }
+  return json
 }
 
 export async function exchangeTinyAuthorizationCode(args: {

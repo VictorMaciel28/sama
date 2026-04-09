@@ -489,7 +489,7 @@ type ShareTarget = {
           <div className="d-flex align-items-center gap-2">
             {entity === 'pedido' && (
               <>
-                {/* <Button size="sm" variant="outline-primary" onClick={syncPedidos} disabled={isSyncingPedidos}>
+                <Button size="sm" variant="outline-primary" onClick={syncPedidos} disabled={isSyncingPedidos}>
                   {isSyncingPedidos ? (
                     <>
                       <Spinner animation="border" size="sm" className="me-2" />
@@ -498,7 +498,7 @@ type ShareTarget = {
                   ) : (
                     'Sincronizar Pedidos'
                   )}
-                </Button> */}
+                </Button>
               </>
             )}
             <Button size="sm" onClick={() => router.push(newPath)}>
@@ -665,10 +665,17 @@ type ShareTarget = {
                  <tbody>
                   {itensPaginados.length > 0 ? (
                    itensPaginados.map((p) => {
+                      const isTinyOrigin = String(p.sistema_origem || 'sama').toLowerCase() === 'tiny'
                       const canEditPedido = entity === 'pedido' ? (isAdmin || p.status === 'Dados incompletos') : true
                       const canDeletePedido = entity === 'pedido' ? isAdmin : true
                       return (
-                      <tr key={p.numero} style={{ cursor: 'pointer' }} onClick={() => router.push(computeItemUrl(p.numero))}>
+                      <tr
+                        key={p.numero}
+                        style={{ cursor: 'pointer' }}
+                        onClick={() => {
+                          router.push(computeItemUrl(p.numero))
+                        }}
+                      >
                          <td>{p.numero}</td>
                          <td>{formatBrDate(p.data)}</td>
                          <td>{p.cliente}</td>
@@ -691,58 +698,62 @@ type ShareTarget = {
                          </td>
                          <td>
                            <div className="d-flex gap-2">
-                      {canEditPedido && (
-                        <Button
-                          variant="outline-secondary"
-                          size="sm"
-                          onClick={(e) => { e.stopPropagation(); router.push(computeItemUrl(p.numero)) }}
-                          title="Editar"
-                        >
-                           <IconifyIcon icon="ri:edit-line" />
-                         </Button>
-                      )}
-                     {!isAdmin && entity === 'pedido' && (
-                        <Button
-                          variant="outline-primary"
-                          size="sm"
-                          onClick={(e) => { e.stopPropagation(); router.push(computeItemUrl(p.numero)) }}
-                          title="Ver"
-                        >
-                          <IconifyIcon icon="ri:eye-line" />
-                        </Button>
-                      )}
-                      <Button
-                        variant="outline-info"
-                        size="sm"
-                        disabled={shareLoadingPedidoNumero === p.numero}
-                        onClick={(e) => openShareModal(e, p.numero)}
-                        title="Compartilhar"
-                      >
-                        {shareLoadingPedidoNumero === p.numero ? (
-                          <Spinner animation="border" size="sm" />
-                        ) : (
-                          <IconifyIcon icon="ri:share-forward-line" />
-                        )}
-                      </Button>
-                           {entity === 'proposta' && (
-                             <Button
-                               variant="outline-success"
-                               size="sm"
-                               onClick={(e) => openEvolve(e, p)}
-                               title="Evoluir para pedido"
-                             >
-                               <IconifyIcon icon="ri:money-dollar-circle-line" />
-                             </Button>
-                           )}
-                            {canDeletePedido && (
+                            {isTinyOrigin ? (
                               <Button
-                                variant="outline-danger"
+                                variant="outline-warning"
                                 size="sm"
-                                onClick={(e) => handleDelete(e, p.numero)}
-                                title="Excluir"
+                                onClick={(e) => e.stopPropagation()}
+                                title="Pedido vindo do Tiny"
+                                style={{ backgroundColor: '#fff', whiteSpace: 'nowrap' }}
                               >
-                                 <IconifyIcon icon="ri:delete-bin-line" />
-                               </Button>
+                                Origem: Tiny
+                              </Button>
+                            ) : (
+                              <>
+                                {canEditPedido && (
+                                  <Button
+                                    variant="outline-secondary"
+                                    size="sm"
+                                    onClick={(e) => { e.stopPropagation(); router.push(computeItemUrl(p.numero)) }}
+                                    title="Editar"
+                                  >
+                                     <IconifyIcon icon="ri:edit-line" />
+                                   </Button>
+                                )}
+                                <Button
+                                  variant="outline-info"
+                                  size="sm"
+                                  disabled={shareLoadingPedidoNumero === p.numero}
+                                  onClick={(e) => openShareModal(e, p.numero)}
+                                  title="Compartilhar"
+                                >
+                                  {shareLoadingPedidoNumero === p.numero ? (
+                                    <Spinner animation="border" size="sm" />
+                                  ) : (
+                                    <IconifyIcon icon="ri:share-forward-line" />
+                                  )}
+                                </Button>
+                                 {entity === 'proposta' && (
+                                   <Button
+                                     variant="outline-success"
+                                     size="sm"
+                                     onClick={(e) => openEvolve(e, p)}
+                                     title="Evoluir para pedido"
+                                   >
+                                     <IconifyIcon icon="ri:money-dollar-circle-line" />
+                                   </Button>
+                                 )}
+                                  {canDeletePedido && (
+                                    <Button
+                                      variant="outline-danger"
+                                      size="sm"
+                                      onClick={(e) => handleDelete(e, p.numero)}
+                                      title="Excluir"
+                                    >
+                                       <IconifyIcon icon="ri:delete-bin-line" />
+                                     </Button>
+                                  )}
+                              </>
                             )}
                            </div>
                          </td>

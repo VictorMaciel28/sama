@@ -83,6 +83,7 @@ export default function PedidoFormPage() {
   const [qtyModalStock, setQtyModalStock] = useState<number | null>(null)
   const [qtyModalLoading, setQtyModalLoading] = useState(false)
   const [qtyModalError, setQtyModalError] = useState<string | null>(null)
+  const [catalogQtyError, setCatalogQtyError] = useState<string | null>(null)
   const [showTinyResult, setShowTinyResult] = useState(false)
   const [tinyResult, setTinyResult] = useState<any>(null)
   const [sentObjectResult, setSentObjectResult] = useState<any>(null)
@@ -252,6 +253,38 @@ export default function PedidoFormPage() {
     })
   }
 
+  const roundQty = (n: number) => {
+    if (!Number.isFinite(n)) return 0
+    return Math.round(n)
+  }
+
+  const getQtdInOrderByProductId = (produtoId?: number) => {
+    if (!produtoId) return 0
+    const pid = Number(produtoId || 0)
+    if (!Number.isFinite(pid) || pid <= 0) return 0
+    return itens
+      .filter((it) => Number(it.produtoId || 0) === pid)
+      .reduce((acc, it) => acc + Number(it.quantidade || 0), 0)
+  }
+
+  const getAvailableMaxForProduct = async (produtoId: number) => {
+    const currentQty = getQtdInOrderByProductId(produtoId)
+    try {
+      const est = await fetchJsonCached(`/api/produtos/${produtoId}/estoque`, 4000)
+      const stock = est?.totalEstoque != null ? Number(est.totalEstoque) : null
+      if (stock == null || !Number.isFinite(stock) || stock < 0) {
+        // If stock is unknown, allow at least keeping current qty.
+        return { maxAllowed: currentQty, stock: null as number | null, currentQty }
+      }
+      // Rule: user must be able to return to the already-loaded order quantity,
+      // even if live stock is lower (order has already "reserved" that amount).
+      const maxAllowed = Math.max(currentQty, stock)
+      return { maxAllowed, stock, currentQty }
+    } catch {
+      return { maxAllowed: currentQty, stock: null as number | null, currentQty }
+    }
+  }
+
   const removeItem = (id: number) => {
     setItens((arr) => arr.filter((it) => it.id !== id))
   }
@@ -278,16 +311,6 @@ export default function PedidoFormPage() {
           setFormaRecebimento(existing.forma_recebimento || 'Boleto')
           setCondicaoPagamento(existing.condicao_pagamento || '')
           const addr = (existing as any)?.endereco_entrega || {}
-          setIsDifferentDeliveryAddress(!!addr?.endereco_diferente)
-          setDeliveryAddress({
-            endereco: addr?.endereco || '',
-            numero: addr?.numero || '',
-            complemento: addr?.complemento || '',
-            bairro: addr?.bairro || '',
-            cep: addr?.cep || '',
-            cidade: addr?.cidade || '',
-            uf: addr?.uf || '',
-          })
 
           const linkedVendedor = (existing as any)?.selected_vendedor
           if (linkedVendedor?.id_vendedor_externo) {
@@ -317,6 +340,33 @@ export default function PedidoFormPage() {
               uf: linkedClient?.uf ?? null,
             })
           }
+
+          const hasEnderecoEntrega =
+            !!(addr?.endereco || addr?.numero || addr?.bairro || addr?.cep || addr?.cidade || addr?.uf)
+          const fallbackEndereco = {
+            endereco: linkedClient?.endereco || '',
+            numero: linkedClient?.numero || '',
+            complemento: linkedClient?.complemento || '',
+            bairro: linkedClient?.bairro || '',
+            cep: linkedClient?.cep || '',
+            cidade: linkedClient?.cidade || '',
+            uf: linkedClient?.uf || '',
+          }
+
+          setIsDifferentDeliveryAddress(Boolean(addr?.endereco_diferente))
+          setDeliveryAddress(
+            hasEnderecoEntrega
+              ? {
+                  endereco: addr?.endereco || '',
+                  numero: addr?.numero || '',
+                  complemento: addr?.complemento || '',
+                  bairro: addr?.bairro || '',
+                  cep: addr?.cep || '',
+                  cidade: addr?.cidade || '',
+                  uf: addr?.uf || '',
+                }
+              : fallbackEndereco
+          )
         }
       } else {
         setForm((f) => ({ ...f, numero: 0 }))
@@ -344,28 +394,40 @@ export default function PedidoFormPage() {
     }
 
     if (!catalogQuery || catalogQuery.trim().length === 0) {
+      if (!isNew) return
       run('')
       return
     }
     if (catalogQuery.trim().length < 3) return
     if (catalogDebounceRef.current) clearTimeout(catalogDebounceRef.current)
     catalogDebounceRef.current = setTimeout(() => run(catalogQuery.trim()), 600)
-  }, [catalogQuery])
+  }, [catalogQuery, isNew])
+
+  const displayedCatalog = useMemo(() => {
+    if (!catalogQuery || catalogQuery.trim().length === 0) {
+      if (!isNew) {
+        return (itens || [])
+          .map((it) => ({
+            id: Number(it.produtoId || 0),
+            nome: String(it.nome || ''),
+            codigo: it.sku ? String(it.sku) : undefined,
+            preco: Number(it.preco || 0),
+            imagem: it.imagemUrl || null,
+          }))
+          .filter((x) => !!x.nome)
+      }
+    }
+    return catalog
+  }, [catalogQuery, isNew, itens, catalog])
 
   const addFromCatalog = (p: CatalogItem) => {
     ;(async () => {
       try {
-        const res = await fetch(`/api/produtos/${p.id}/estoque`)
-        const est = await res.json().catch(() => ({ totalEstoque: null }))
-        const stock = est?.totalEstoque != null ? Number(est.totalEstoque) : null
         const currentQty = getQtdInOrderBySku(p.codigo)
-        if (stock != null && currentQty + 1 > stock) {
-          // open qty modal with error
-          setQtyModalProduct(p)
-          setQtyModalValue(currentQty + 1)
-          setQtyModalStock(stock)
-          setQtyModalError(`Estoque não disponível, estoque atual: ${stock}`)
-          setShowQtyModal(true)
+        const { maxAllowed } = await getAvailableMaxForProduct(p.id)
+        const nextQty = roundQty(currentQty + 1)
+        if (nextQty > maxAllowed) {
+          setCatalogQtyError(`Estoque não disponível para aumentar. Máximo permitido: ${maxAllowed}`)
           return
         }
         // proceed to add
@@ -375,7 +437,7 @@ export default function PedidoFormPage() {
             const next = [...arr]
             next[idx] = {
               ...next[idx],
-              quantidade: next[idx].quantidade + 1,
+              quantidade: roundQty(next[idx].quantidade + 1),
               produtoId: next[idx].produtoId ?? p.id,
             }
             return next
@@ -396,6 +458,7 @@ export default function PedidoFormPage() {
             } as ItemPedidoWithOriginal,
           ]
         })
+        setCatalogQtyError(null)
       } catch (e) {
         // ignore errors here to avoid disrupting catalog state
       }
@@ -408,13 +471,57 @@ export default function PedidoFormPage() {
       if (idx < 0) return arr
       const curr = arr[idx]
       const next = [...arr]
-      if (curr.quantidade > 1) {
-        next[idx] = { ...curr, quantidade: curr.quantidade - 1 }
+      if (Number(curr.quantidade || 0) > 1) {
+        next[idx] = { ...curr, quantidade: roundQty(Number(curr.quantidade || 0) - 1) }
       } else {
         next.splice(idx, 1)
       }
       return next
     })
+  }
+
+  const setQtyForCatalogItem = (p: CatalogItem, qtyRaw: number) => {
+    ;(async () => {
+      const qty = roundQty(qtyRaw)
+      if (qty <= 0) {
+        setItens((arr) =>
+          arr.filter((it) => (it.sku || '').toLowerCase() !== (p.codigo || '').toLowerCase())
+        )
+        setCatalogQtyError(null)
+        return
+      }
+
+      const { maxAllowed } = await getAvailableMaxForProduct(p.id)
+      if (qty > maxAllowed) {
+        setCatalogQtyError(`Estoque não disponível. Máximo permitido: ${maxAllowed}`)
+        return
+      }
+
+      setItens((arr) => {
+        const idx = arr.findIndex((it) => (it.sku || '').toLowerCase() === (p.codigo || '').toLowerCase())
+        if (idx >= 0) {
+          const next = [...arr]
+          next[idx] = { ...next[idx], quantidade: qty, produtoId: next[idx].produtoId ?? p.id }
+          return next
+        }
+        const nextId = arr.reduce((m, it) => Math.max(m, it.id), 0) + 1
+        return [
+          ...arr,
+          {
+            id: nextId,
+            produtoId: p.id,
+            nome: p.nome,
+            sku: p.codigo,
+            quantidade: qty,
+            unidade: 'PC',
+            preco: Number(p.preco || 0),
+            originalPreco: Number(p.preco || 0),
+            imagemUrl: p.imagem || undefined,
+          } as ItemPedidoWithOriginal,
+        ]
+      })
+      setCatalogQtyError(null)
+    })()
   }
 
   const openCatalogDetail = (p: CatalogItem) => {
@@ -806,7 +913,7 @@ export default function PedidoFormPage() {
       }
 
       // Apenas salvar localmente na plataforma (pedido)
-      const formExt = form as Record<string, unknown>
+      const formExt = form as unknown as Record<string, unknown>
       const idContato =
         selectedClient?.external_id != null && String(selectedClient.external_id).trim() !== ''
           ? Number(selectedClient.external_id)
@@ -906,8 +1013,9 @@ export default function PedidoFormPage() {
   }, [itens, form.total, isNew])
 
   const descontoHabilitado = useMemo(() => {
-    if (formaRecebimento === 'Pix') return true
-    if (formaRecebimento === 'Boleto' && condicaoPagamento === '7 dias') return true
+    const forma = String(formaRecebimento || '').trim().toLowerCase()
+    if (forma === 'pix') return true
+    if (forma === 'boleto' && condicaoPagamento === '7 dias') return true
     return false
   }, [formaRecebimento, condicaoPagamento])
 
@@ -975,25 +1083,39 @@ export default function PedidoFormPage() {
   }, [])
 
   const selectedFormaRecebimentoId = useMemo(() => {
-    const found = receiveForms.find((f) => f.nome === formaRecebimento)
+    const current = String(formaRecebimento || '').trim().toLowerCase()
+    const found = receiveForms.find((f) => String(f.nome || '').trim().toLowerCase() === current)
     return found?.id ?? 0
   }, [receiveForms, formaRecebimento])
 
   const condicoesPagamentoOptions = useMemo(() => {
-    const base =
-      formaRecebimento === 'Boleto'
-        ? paymentConditions.map((c) => c.name)
-        : ['À vista']
+    const baseOptions = paymentConditions.map((c) => ({
+      value: c.name,
+      label: c.name,
+      despadronizado: false,
+    }))
+
+    const isTinyOrder = String((form as any)?.sistema_origem || '').toLowerCase() === 'tiny'
 
     // Keep persisted condition visible even if not returned in current list.
-    if (condicaoPagamento && !base.includes(condicaoPagamento)) {
-      return [condicaoPagamento, ...base]
+    if (condicaoPagamento && !baseOptions.some((opt) => opt.value === condicaoPagamento)) {
+      return [
+        {
+          value: condicaoPagamento,
+          label: isTinyOrder ? `${condicaoPagamento} (Despadronizado)` : condicaoPagamento,
+          despadronizado: isTinyOrder,
+        },
+        ...baseOptions,
+      ]
     }
-    return base
-  }, [formaRecebimento, paymentConditions, condicaoPagamento])
+    if (!baseOptions.some((opt) => opt.value === 'À vista')) {
+      return [...baseOptions, { value: 'À vista', label: 'À vista', despadronizado: false }]
+    }
+    return baseOptions
+  }, [formaRecebimento, paymentConditions, condicaoPagamento, form])
 
   const diasParcelas: number[] = useMemo(() => {
-    if (formaRecebimento !== 'Boleto') return []
+    if (String(formaRecebimento || '').trim().toLowerCase() !== 'boleto') return []
     if (!condicaoPagamento) return []
     if (condicaoPagamento === '7 dias') return [7]
     const matches = condicaoPagamento.match(/\d+/g) || []
@@ -1001,7 +1123,7 @@ export default function PedidoFormPage() {
   }, [formaRecebimento, condicaoPagamento])
 
   const parcelas = useMemo(() => {
-    if (formaRecebimento !== 'Boleto' || diasParcelas.length === 0) return []
+    if (String(formaRecebimento || '').trim().toLowerCase() !== 'boleto' || diasParcelas.length === 0) return []
     const baseDate = new Date(form.data || new Date().toISOString().slice(0, 10))
     const qtd = diasParcelas.length
     const valorParcela = qtd > 0 ? totalComDesconto / qtd : 0
@@ -1013,7 +1135,7 @@ export default function PedidoFormPage() {
   }, [diasParcelas, totalComDesconto, form.data, formaRecebimento])
 
   const markupPct = useMemo(() => {
-    if (formaRecebimento !== 'Boleto') return 0
+    if (String(formaRecebimento || '').trim().toLowerCase() !== 'boleto') return 0
     // Prefer configured percentage from DB
     const cfg = paymentConditions.find((c) => c.name === condicaoPagamento)
     if (cfg) return Number(cfg.percent) / 100
@@ -1032,7 +1154,7 @@ export default function PedidoFormPage() {
 
   // Validação: valor mínimo do pedido conforme condição cadastrada (payment_condition.valor_minimo)
   const pagamentoParceladoErro = useMemo(() => {
-    if (formaRecebimento !== 'Boleto' || !condicaoPagamento) return ''
+    if (String(formaRecebimento || '').trim().toLowerCase() !== 'boleto' || !condicaoPagamento) return ''
     const cfg = paymentConditions.find((c) => c.name === condicaoPagamento)
     const min = cfg?.valor_minimo
     if (min == null || min <= 0) return ''
@@ -1046,7 +1168,7 @@ export default function PedidoFormPage() {
   // Apply markup on itens when boleto condition changes
   useEffect(() => {
     const applyMarkup = () => {
-      if (formaRecebimento !== 'Boleto' || !condicaoPagamento) {
+      if (String(formaRecebimento || '').trim().toLowerCase() !== 'boleto' || !condicaoPagamento) {
         // revert to original prices
         setItens((arr) => arr.map((it: any) => ({ ...it, preco: (it.originalPreco != null ? it.originalPreco : it.preco) })))
         return
@@ -1180,6 +1302,18 @@ export default function PedidoFormPage() {
       <Card className="border-0 shadow-sm mb-3">
         <Card.Body>
           <Row className="g-3 align-items-end">
+            <style jsx global>{`
+              /* Hide number input spinners (we use +/- buttons) */
+              .qty-input::-webkit-outer-spin-button,
+              .qty-input::-webkit-inner-spin-button {
+                -webkit-appearance: none;
+                margin: 0;
+              }
+              .qty-input[type='number'] {
+                -moz-appearance: textfield;
+                appearance: textfield;
+              }
+            `}</style>
             <Col lg={4}>
               <Form.Label>Cliente</Form.Label>
               <div className="position-relative">
@@ -1242,15 +1376,15 @@ export default function PedidoFormPage() {
               <Form.Select value={condicaoPagamento} onChange={(e) => setCondicaoPagamento(e.target.value)}>
                 <option value="">Selecione</option>
                 {condicoesPagamentoOptions.map((opt) => {
-                  const cfg = paymentConditions.find((c) => c.name === opt)
+                  const cfg = paymentConditions.find((c) => c.name === opt.value)
                   const min = cfg?.valor_minimo
                   const minSuffix =
                     min != null && min > 0
                       ? ` (min ${min.toLocaleString('pt-BR', { maximumFractionDigits: 2 })}RS)`
                       : ''
                   return (
-                    <option key={opt} value={opt}>
-                      {opt}
+                    <option key={opt.value} value={opt.value}>
+                      {opt.label}
                       {minSuffix}
                     </option>
                   )
@@ -1347,14 +1481,17 @@ export default function PedidoFormPage() {
               value={catalogQuery}
               onChange={(e) => setCatalogQuery(e.target.value)}
             />
+            {catalogQtyError && (
+              <div className="text-danger small mt-2">{catalogQtyError}</div>
+            )}
             <div className="mt-2 border rounded d-none d-md-block" style={{ maxHeight: 320, overflowY: 'auto' }}>
               {catalogLoading ? (
                 <div className="p-2 small text-muted">Carregando produtos...</div>
-              ) : catalog.length === 0 ? (
+              ) : displayedCatalog.length === 0 ? (
                 <div className="p-2 small text-muted">Nenhum produto encontrado.</div>
               ) : (
                 <div className="list-group list-group-flush">
-                  {catalog.map((p) => (
+                  {displayedCatalog.map((p) => (
                     <div key={p.id} className="list-group-item py-2 d-flex justify-content-between align-items-center">
                       <div className="me-2">
                         <div className="fw-semibold small">{p.nome}</div>
@@ -1370,25 +1507,29 @@ export default function PedidoFormPage() {
                         )}
                       </div>
                       <div className="d-flex gap-1">
-                        {/* Quantidade atual no pedido para este SKU */}
-                        {getQtdInOrderBySku(p.codigo) > 0 && (
-                          <span
-                            role="button"
-                            onClick={() => openQtyEditor(p)}
-                            className="badge bg-secondary align-self-center me-1"
-                            title="Quantidade no pedido (clique para editar)"
-                            style={{ cursor: 'pointer' }}
-                          >
-                            {getQtdInOrderBySku(p.codigo)}
-                          </span>
-                        )}
                         <Button variant="outline-secondary" size="sm" title="Detalhes" onClick={() => openCatalogDetail(p)}>
                           <IconifyIcon icon="ri:search-line" />
                         </Button>
-                        <Button variant="outline-secondary" size="sm" title="Remover 1" onClick={() => removeFromCatalog(p)}>
+                        <Button variant="outline-secondary" size="sm" title="Diminuir 1" onClick={() => setQtyForCatalogItem(p, getQtdInOrderBySku(p.codigo) - 1)}>
                           <IconifyIcon icon="ri:subtract-line" />
                         </Button>
-                        <Button variant="primary" size="sm" title="Adicionar 1" onClick={() => addFromCatalog(p)}>
+                        <Form.Control
+                          size="sm"
+                          type="number"
+                          inputMode="decimal"
+                          step={1}
+                          min={0}
+                          className="qty-input"
+                          style={{ width: 64 }}
+                          value={getQtdInOrderBySku(p.codigo) || 0}
+                          onClick={(e) => e.stopPropagation()}
+                          onChange={(e) => {
+                            const v = Number(e.target.value)
+                            if (!Number.isFinite(v)) return
+                            setQtyForCatalogItem(p, v)
+                          }}
+                        />
+                        <Button variant="primary" size="sm" title="Aumentar 1" onClick={() => setQtyForCatalogItem(p, getQtdInOrderBySku(p.codigo) + 1)}>
                           <IconifyIcon icon="ri:add-line" />
                         </Button>
                       </div>
@@ -1459,7 +1600,7 @@ export default function PedidoFormPage() {
               </Col>
             </Row>
 
-            {formaRecebimento === 'Boleto' && parcelas.length > 0 && (
+            {parcelas.length > 0 && (
               <div className="mt-3">
                 <div className="fw-semibold mb-2">Parcelas</div>
                 <div className="table-responsive">

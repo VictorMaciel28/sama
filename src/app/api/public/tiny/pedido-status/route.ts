@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { tinyV3Fetch } from '@/lib/tinyOAuth'
+import { tinyV2Post } from '@/lib/tinyOAuth'
 import { recomputeCommissionsForOrder } from '@/services/commission'
 
 export const runtime = 'nodejs'
@@ -74,29 +74,16 @@ function normalizeCondicaoPagamento(value: unknown) {
 }
 
 function buildEnderecoEntrega(tinyPedido: any) {
-  if (tinyPedido?.enderecoEntrega) {
+  if (tinyPedido?.endereco_entrega) {
     return {
-      endereco: tinyPedido.enderecoEntrega?.endereco || '',
-      numero: tinyPedido.enderecoEntrega?.numero || '',
-      complemento: tinyPedido.enderecoEntrega?.complemento || '',
-      bairro: tinyPedido.enderecoEntrega?.bairro || '',
-      cep: tinyPedido.enderecoEntrega?.cep || '',
-      cidade: tinyPedido.enderecoEntrega?.municipio || '',
-      uf: tinyPedido.enderecoEntrega?.uf || '',
+      endereco: tinyPedido.endereco_entrega?.endereco || '',
+      numero: tinyPedido.endereco_entrega?.numero || '',
+      complemento: tinyPedido.endereco_entrega?.complemento || '',
+      bairro: tinyPedido.endereco_entrega?.bairro || '',
+      cep: tinyPedido.endereco_entrega?.cep || '',
+      cidade: tinyPedido.endereco_entrega?.cidade || '',
+      uf: tinyPedido.endereco_entrega?.uf || '',
       endereco_diferente: true,
-    }
-  }
-
-  if (tinyPedido?.cliente?.endereco) {
-    return {
-      endereco: tinyPedido.cliente.endereco?.endereco || '',
-      numero: tinyPedido.cliente.endereco?.numero || '',
-      complemento: tinyPedido.cliente.endereco?.complemento || '',
-      bairro: tinyPedido.cliente.endereco?.bairro || '',
-      cep: tinyPedido.cliente.endereco?.cep || '',
-      cidade: tinyPedido.cliente.endereco?.municipio || '',
-      uf: tinyPedido.cliente.endereco?.uf || '',
-      endereco_diferente: false,
     }
   }
 
@@ -135,49 +122,45 @@ async function handle(req: NextRequest) {
     where: { tiny_id: tinyOrderId },
     select: { id: true, numero: true },
   })
-  let tinyPedidoFromV3: any = null
+  let tinyPedidoFromV2: any = null
 
-  // If not found locally by tiny_id, fetch from Tiny v3 and persist.
+  // If not found locally by tiny_id, fetch from Tiny v2 and persist.
   let tinyFetchError: string | null = null
   if (!row) {
     try {
-      const tinyRes = await tinyV3Fetch(`/pedidos/${tinyOrderId}`, { method: 'GET' })
-      const tinyJson = await tinyRes.json().catch(() => null)
-      const tinyJsonIsObject = !!tinyJson && typeof tinyJson === 'object' && !Array.isArray(tinyJson)
-      const rootHasId = tinyJsonIsObject && Number((tinyJson as any)?.id || 0) > 0
-      const tinyPedido = rootHasId
-        ? tinyJson
-        : tinyJson?.item ||
-          tinyJson?.pedido ||
-          tinyJson?.data ||
-          tinyJson?.retorno?.pedido ||
-          tinyJson?.retorno?.item ||
-          tinyJson
-      tinyPedidoFromV3 = tinyPedido
+      const tinyJson = await tinyV2Post('pedido.obter.php', { id: tinyOrderId })
+      const retorno = tinyJson?.retorno
+      if (String(retorno?.status || '') !== 'OK' || !retorno?.pedido) {
+        tinyFetchError =
+          Array.isArray(retorno?.erros) && retorno.erros.length > 0
+            ? String(retorno.erros[0]?.erro || '')
+            : 'tiny_v2_not_found_or_invalid'
+        throw new Error(tinyFetchError)
+      }
 
-      const numero = Number(tinyPedido?.numeroPedido || tinyPedido?.numero || payload?.dados?.numero || 0)
+      const tinyPedido = retorno.pedido
+      tinyPedidoFromV2 = tinyPedido
+
+      const numero = Number(tinyPedido?.numero || payload?.dados?.numero || 0)
       const tinyPedidoId = Number(tinyPedido?.id || 0)
 
-      if (tinyRes.ok && tinyPedidoId > 0) {
+      if (tinyPedidoId > 0) {
         if (tinyPedidoId !== tinyOrderId) {
-          tinyFetchError = `tiny_v3_id_mismatch: expected=${tinyOrderId}, got=${tinyPedidoId}`
+          tinyFetchError = `tiny_v2_id_mismatch: expected=${tinyOrderId}, got=${tinyPedidoId}`
           throw new Error(tinyFetchError)
         }
         if (!Number.isFinite(numero) || numero <= 0) {
-          tinyFetchError = `tiny_v3_missing_numero: status=${tinyRes.status}, keys=${Object.keys(tinyJson || {}).join(',')}`
+          tinyFetchError = `tiny_v2_missing_numero: expectedKeys=retorno.pedido.numero`
           throw new Error(tinyFetchError)
         }
-        const dataStr = String(tinyPedido?.data || '').slice(0, 10)
+        const dataBr = String(tinyPedido?.data_pedido || '')
+        const dataIso = dataBr ? dataBr.split('/').reverse().join('-') : ''
         const clienteNome = String(tinyPedido?.cliente?.nome || '').trim()
-        const clienteCpfCnpj = String(tinyPedido?.cliente?.cpfCnpj || '').trim()
-        const vendedorExterno =
-          tinyPedido?.vendedor?.id != null ? String(tinyPedido.vendedor.id).trim() : null
-        const idClientExterno =
-          tinyPedido?.cliente?.id != null ? BigInt(String(tinyPedido.cliente.id)) : null
-        const formaRecebimento = tinyPedido?.pagamento?.formaRecebimento?.nome
-          ? String(tinyPedido.pagamento.formaRecebimento.nome)
-          : null
-        const condicaoPagamento = normalizeCondicaoPagamento(tinyPedido?.pagamento?.condicaoPagamento)
+        const clienteCpfCnpj = String(tinyPedido?.cliente?.cpf_cnpj || '').trim()
+        const vendedorExterno = tinyPedido?.id_vendedor != null ? String(tinyPedido.id_vendedor).trim() : null
+        const idClientExterno = null
+        const formaRecebimento = tinyPedido?.forma_pagamento ? String(tinyPedido.forma_pagamento) : null
+        const condicaoPagamento = normalizeCondicaoPagamento(tinyPedido?.condicao_pagamento)
         const enderecoEntrega = buildEnderecoEntrega(tinyPedido)
 
         const existingByTinyId = await prisma.platform_order.findFirst({
@@ -187,10 +170,10 @@ async function handle(req: NextRequest) {
         const existingByNumero = await prisma.platform_order.findUnique({ where: { numero } })
         const baseData: any = {
           numero,
-          data: dataStr ? new Date(dataStr) : new Date(),
+          data: dataIso ? new Date(dataIso) : new Date(),
           cliente: clienteNome || 'Cliente não informado',
           cnpj: clienteCpfCnpj || '',
-          total: Number(tinyPedido?.valorTotalPedido || tinyPedido?.valorTotalProdutos || 0),
+          total: Number(tinyPedido?.total_pedido || tinyPedido?.total_produtos || 0),
           status: mappedStatus || 'PENDENTE',
           forma_recebimento: formaRecebimento,
           condicao_pagamento: condicaoPagamento,
@@ -199,6 +182,7 @@ async function handle(req: NextRequest) {
           id_client_externo: idClientExterno,
           tiny_id: tinyOrderId,
           id_nota_fiscal: notaFiscalId || null,
+          sistema_origem: 'tiny',
         }
 
         if (existingByTinyId) {
@@ -220,10 +204,10 @@ async function handle(req: NextRequest) {
           select: { id: true, numero: true },
         })
       } else {
-        tinyFetchError = `tiny_v3_not_found_or_invalid: status=${tinyRes.status}, tinyPedidoId=${tinyPedidoId}, rootHasId=${rootHasId ? 1 : 0}, keys=${Object.keys(tinyJson || {}).join(',')}`
+        tinyFetchError = `tiny_v2_not_found_or_invalid: tinyPedidoId=${tinyPedidoId}`
       }
     } catch (e: any) {
-      tinyFetchError = e?.message || 'tiny_v3_fetch_failed'
+      tinyFetchError = e?.message || 'tiny_v2_fetch_failed'
     }
   }
 
@@ -241,30 +225,20 @@ async function handle(req: NextRequest) {
 
   // For existing orders, we still refresh full Tiny payload and items.
   // This keeps platform_order_product in sync when webhook arrives after order already exists.
-  if (!tinyPedidoFromV3) {
+  if (!tinyPedidoFromV2) {
     try {
-      const tinyRes = await tinyV3Fetch(`/pedidos/${tinyOrderId}`, { method: 'GET' })
-      const tinyJson = await tinyRes.json().catch(() => null)
-      const tinyJsonIsObject = !!tinyJson && typeof tinyJson === 'object' && !Array.isArray(tinyJson)
-      const rootHasId = tinyJsonIsObject && Number((tinyJson as any)?.id || 0) > 0
-      const tinyPedido = rootHasId
-        ? tinyJson
-        : tinyJson?.item ||
-          tinyJson?.pedido ||
-          tinyJson?.data ||
-          tinyJson?.retorno?.pedido ||
-          tinyJson?.retorno?.item ||
-          tinyJson
-      if (tinyRes.ok && Number(tinyPedido?.id || 0) === tinyOrderId) {
-        tinyPedidoFromV3 = tinyPedido
+      const tinyJson = await tinyV2Post('pedido.obter.php', { id: tinyOrderId })
+      const retorno = tinyJson?.retorno
+      if (String(retorno?.status || '') === 'OK' && retorno?.pedido && Number(retorno.pedido?.id || 0) === tinyOrderId) {
+        tinyPedidoFromV2 = retorno.pedido
       }
     } catch {
       // Keep flow resilient; status update should not fail if Tiny detail fetch fails here.
     }
   }
 
-  if (tinyPedidoFromV3) {
-    const enderecoEntrega = buildEnderecoEntrega(tinyPedidoFromV3)
+  if (tinyPedidoFromV2) {
+    const enderecoEntrega = buildEnderecoEntrega(tinyPedidoFromV2)
     if (enderecoEntrega) {
       await prisma.platform_order.update({
         where: { id: row.id },
@@ -272,18 +246,18 @@ async function handle(req: NextRequest) {
       })
     }
 
-    const itens = Array.isArray(tinyPedidoFromV3?.itens) ? tinyPedidoFromV3.itens : []
+    const itens = Array.isArray(tinyPedidoFromV2?.itens) ? tinyPedidoFromV2.itens : []
     await prisma.platform_order_product.deleteMany({ where: { tiny_id: tinyOrderId } as any })
     if (itens.length > 0) {
       await prisma.platform_order_product.createMany({
         data: itens.map((it: any) => ({
           tiny_id: tinyOrderId,
-          produto_id: it?.produto?.id != null ? Number(it.produto.id) : null,
-          codigo: it?.produto?.sku ? String(it.produto.sku) : null,
-          nome: String(it?.produto?.descricao || 'Produto'),
-          preco: Number(it?.valorUnitario || 0),
-          quantidade: Number(it?.quantidade || 0),
-          unidade: 'UN',
+          produto_id: it?.item?.id_produto != null ? Number(it.item.id_produto) : null,
+          codigo: it?.item?.codigo ? String(it.item.codigo) : null,
+          nome: String(it?.item?.descricao || 'Produto'),
+          preco: Number(it?.item?.valor_unitario || 0),
+          quantidade: Number(it?.item?.quantidade || 0),
+          unidade: it?.item?.unidade ? String(it.item.unidade) : 'UN',
         })) as any,
       })
     }

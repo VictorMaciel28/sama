@@ -257,8 +257,11 @@ async function sendOrderEmail(recipient: string, order: any, pdf: Buffer, htmlBo
   const transporter = buildMailer()
   const subject = `Pedido #${order.numero} - ${order.cliente}`
   const text = `Segue em anexo o resumo do pedido ${order.numero} de ${order.cliente}.`
+  let smtpVerified = false
+  let smtpVerifyError: string | null = null
   try {
     await transporter.verify()
+    smtpVerified = true
     console.log(
       '[sendOrderEmail] SMTP verified',
       MAIL_CONFIG.host,
@@ -266,6 +269,7 @@ async function sendOrderEmail(recipient: string, order: any, pdf: Buffer, htmlBo
       `user=${MAIL_CONFIG.user}`
     )
   } catch (err) {
+    smtpVerifyError = (err as any)?.message ? String((err as any).message) : 'smtp_verify_failed'
     console.warn('[sendOrderEmail] SMTP verify failed', err)
   }
 
@@ -290,6 +294,23 @@ async function sendOrderEmail(recipient: string, order: any, pdf: Buffer, htmlBo
     accepted: info.accepted,
     rejected: info.rejected,
   })
+
+  return {
+    smtp: {
+      host: MAIL_CONFIG.host,
+      port: MAIL_CONFIG.port,
+      secure: MAIL_CONFIG.port === 465,
+      user: MAIL_CONFIG.user,
+      verified: smtpVerified,
+      verify_error: smtpVerifyError,
+    },
+    message: {
+      messageId: info.messageId,
+      response: info.response,
+      accepted: info.accepted,
+      rejected: info.rejected,
+    },
+  }
 }
 
 export async function POST(req: Request) {
@@ -313,9 +334,20 @@ export async function POST(req: Request) {
     const order = await authorizeOrder(numero, userAccess)
     const html = buildOrderSummaryHtml(order)
     const pdf = renderPlatformOrderPdfBuffer(order)
-    await sendOrderEmail(email, order, pdf, html)
+    const result = await sendOrderEmail(email, order, pdf, html)
 
-    return NextResponse.json({ ok: true })
+    const accepted = Array.isArray(result?.message?.accepted) ? result.message.accepted : []
+    const rejected = Array.isArray(result?.message?.rejected) ? result.message.rejected : []
+    const deliveredTo = accepted.map((v: any) => String(v)).filter(Boolean)
+    const rejectedTo = rejected.map((v: any) => String(v)).filter(Boolean)
+    const ok = deliveredTo.includes(email) && !rejectedTo.includes(email)
+
+    return NextResponse.json({
+      ok,
+      numero,
+      to: email,
+      mail: result,
+    })
   } catch (error: any) {
     const message = error?.message || 'erro_ao_enviar_email'
     return NextResponse.json({ ok: false, error: message }, { status: 500 })

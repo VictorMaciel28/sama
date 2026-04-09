@@ -5,9 +5,15 @@ export interface Pedido {
   data: string // ISO date: YYYY-MM-DD
   cliente: string
   cnpj: string
+  sistema_origem?: 'tiny' | 'sama' | string
   id_client_externo?: string | null
   total: number
   status: PedidoStatus
+  id_vendedor_externo?: string | null
+  order_vendor_externo?: string | null
+  order_vendor_nome?: string | null
+  client_vendor_externo?: string | null
+  client_vendor_nome?: string | null
   forma_recebimento?: string | null
   condicao_pagamento?: string | null
   endereco_entrega?: {

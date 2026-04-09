@@ -2,6 +2,18 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
+import { tinyV2Post } from '@/lib/tinyOAuth'
+
+function toIsoDate(input: unknown) {
+  const raw = String(input || '').trim()
+  if (!raw) return new Date().toISOString().slice(0, 10)
+  const brDateMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (brDateMatch) {
+    const [, dd, mm, yyyy] = brDateMatch
+    return `${yyyy}-${mm}-${dd}`
+  }
+  return raw.slice(0, 10)
+}
 
 export async function GET(_: Request, { params }: { params: { numero: string } }) {
   try {
@@ -24,7 +36,7 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
     const numero = Number(params?.numero || 0)
     if (!numero) return NextResponse.json({ ok: false, error: 'Número inválido' }, { status: 400 })
 
-    const row = await prisma.platform_order.findUnique({
+    let row = await prisma.platform_order.findUnique({
       where: { numero },
       include: {
         cliente_rel: true,
@@ -35,6 +47,82 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
     })
     if (!row || (!isAdmin && row.id_vendedor_externo !== vendedorExterno)) {
       return NextResponse.json({ ok: false, error: 'Pedido não encontrado' }, { status: 404 })
+    }
+
+    let tinyPedidoV2: any = null
+    const shouldBackfillFromTinyV2 =
+      String((row as any).sistema_origem || '').toLowerCase() === 'tiny' &&
+      Number(row.tiny_id || 0) > 0
+
+    if (shouldBackfillFromTinyV2) {
+      try {
+        const tinyJson = await tinyV2Post('pedido.obter.php', { id: Number(row.tiny_id) })
+        const retorno = tinyJson?.retorno
+        if (String(retorno?.status || '') === 'OK' && retorno?.pedido) {
+          tinyPedidoV2 = retorno.pedido
+
+          const tinyCliente = tinyPedidoV2?.cliente || {}
+          const tinyEndereco = tinyPedidoV2?.endereco_entrega || null
+          const tinyVendedorId = tinyPedidoV2?.id_vendedor ? String(tinyPedidoV2.id_vendedor) : null
+          const tinyData = toIsoDate(tinyPedidoV2?.data_pedido)
+
+          await prisma.platform_order.update({
+            where: { numero: row.numero },
+            data: {
+              data: tinyData ? new Date(tinyData) : row.data,
+              cliente: String(tinyCliente?.nome || row.cliente || 'Cliente não informado'),
+              cnpj: String(tinyCliente?.cpf_cnpj || row.cnpj || ''),
+              total: Number(tinyPedidoV2?.total_pedido || tinyPedidoV2?.total_produtos || row.total || 0),
+              forma_recebimento: String(tinyPedidoV2?.forma_pagamento || row.forma_recebimento || '') || null,
+              condicao_pagamento: String(tinyPedidoV2?.condicao_pagamento || row.condicao_pagamento || '') || null,
+              endereco_entrega: tinyEndereco
+                ? {
+                    endereco: String(tinyEndereco?.endereco || ''),
+                    numero: String(tinyEndereco?.numero || ''),
+                    complemento: String(tinyEndereco?.complemento || ''),
+                    bairro: String(tinyEndereco?.bairro || ''),
+                    cep: String(tinyEndereco?.cep || ''),
+                    cidade: String(tinyEndereco?.cidade || ''),
+                    uf: String(tinyEndereco?.uf || ''),
+                    endereco_diferente: true,
+                  }
+                : row.endereco_entrega,
+              id_vendedor_externo: tinyVendedorId || row.id_vendedor_externo,
+            } as any,
+          })
+
+          const tinyItens = Array.isArray(tinyPedidoV2?.itens) ? tinyPedidoV2.itens : []
+          if (tinyItens.length > 0 && Number(row.tiny_id || 0) > 0) {
+            await prisma.platform_order_product.deleteMany({ where: { tiny_id: Number(row.tiny_id) } as any })
+            await prisma.platform_order_product.createMany({
+              data: tinyItens.map((entry: any) => {
+                const item = entry?.item || {}
+                return {
+                  tiny_id: Number(row.tiny_id),
+                  produto_id: item?.id_produto != null && Number(item.id_produto) > 0 ? Number(item.id_produto) : null,
+                  codigo: item?.codigo != null ? String(item.codigo) : null,
+                  nome: String(item?.descricao || 'Produto'),
+                  preco: Number(item?.valor_unitario || 0),
+                  quantidade: Number(item?.quantidade || 0),
+                  unidade: item?.unidade ? String(item.unidade) : 'UN',
+                }
+              }) as any,
+            })
+          }
+
+          row = await prisma.platform_order.findUnique({
+            where: { numero },
+            include: {
+              cliente_rel: true,
+              products: {
+                orderBy: { id: 'asc' },
+              },
+            },
+          }) as any
+        }
+      } catch {
+        // Keep opening flow resilient even if Tiny v2 fails.
+      }
     }
 
     let selectedVendedor: any = null
@@ -62,12 +150,21 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
       data: row.data.toISOString().slice(0, 10),
       cliente: row.cliente,
       cnpj: row.cnpj,
+      sistema_origem: String((row as any).sistema_origem || 'sama').toLowerCase(),
       id_client_externo: row.id_client_externo?.toString?.() ?? null,
       total: Number(row.total),
       forma_recebimento: row.forma_recebimento,
       condicao_pagamento: row.condicao_pagamento,
       endereco_entrega: row.endereco_entrega,
-      selected_vendedor: selectedVendedor,
+      selected_vendedor:
+        selectedVendedor ||
+        (tinyPedidoV2?.id_vendedor
+          ? {
+              id_vendedor_externo: String(tinyPedidoV2.id_vendedor),
+              nome: tinyPedidoV2?.nome_vendedor ? String(tinyPedidoV2.nome_vendedor) : null,
+              tipo: null,
+            }
+          : null),
       selected_client: row.cliente_rel
         ? {
             id: row.cliente_rel.id,
@@ -82,8 +179,25 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
             complemento: row.cliente_rel.complemento ?? null,
             bairro: row.cliente_rel.bairro ?? null,
             cep: row.cliente_rel.cep ?? null,
-            uf: row.cliente_rel.uf ?? null,
+            uf: row.cliente_rel.estado ?? null,
             email: row.cliente_rel.email ?? null,
+          }
+        : tinyPedidoV2?.cliente
+        ? {
+            id: null,
+            external_id: row.id_client_externo?.toString?.() ?? null,
+            nome: String(tinyPedidoV2.cliente?.nome || row.cliente || ''),
+            cpf_cnpj: String(tinyPedidoV2.cliente?.cpf_cnpj || row.cnpj || ''),
+            id_vendedor_externo: tinyPedidoV2?.id_vendedor ? String(tinyPedidoV2.id_vendedor) : null,
+            nome_vendedor: tinyPedidoV2?.nome_vendedor ? String(tinyPedidoV2.nome_vendedor) : null,
+            cidade: String(tinyPedidoV2.cliente?.cidade || ''),
+            endereco: String(tinyPedidoV2.cliente?.endereco || ''),
+            numero: String(tinyPedidoV2.cliente?.numero || ''),
+            complemento: String(tinyPedidoV2.cliente?.complemento || ''),
+            bairro: String(tinyPedidoV2.cliente?.bairro || ''),
+            cep: String(tinyPedidoV2.cliente?.cep || ''),
+            uf: String(tinyPedidoV2.cliente?.uf || ''),
+            email: String(tinyPedidoV2.cliente?.email || ''),
           }
         : null,
       itens: (row.products || []).map((p: any) => ({

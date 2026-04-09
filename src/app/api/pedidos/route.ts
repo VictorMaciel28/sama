@@ -2,7 +2,15 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
-import { tinyV3Fetch } from '@/lib/tinyOAuth'
+import { tinyV2Post } from '@/lib/tinyOAuth'
+
+function formatBrDate(iso: string) {
+  const s = String(iso || '').slice(0, 10)
+  const [y, m, d] = s.split('-')
+  if (!y || !m || !d) return ''
+  return `${d}/${m}/${y}`
+}
+
 
 export async function GET(req: Request) {
   try {
@@ -171,6 +179,7 @@ export async function GET(req: Request) {
         data: r.data.toISOString().slice(0, 10),
         cliente: r.cliente,
         cnpj: r.cnpj,
+        sistema_origem: String(r.sistema_origem || 'sama').toLowerCase(),
         total: Number(r.total),
         status:
           r.status === 'PROPOSTA'
@@ -371,33 +380,33 @@ export async function POST(req: Request) {
       .toUpperCase()
       .replace(/[^A-Z]/g, '')
       .slice(0, 2)
-    const enderecoTiny = {
+    const clienteV2 = {
+      nome: String((rawCliente?.nome as string) ?? (body?.cliente || '')).trim(),
+      cpf_cnpj: String((rawCliente?.cpf_cnpj as string) ?? (body?.cnpj || '')).trim(),
       endereco: pickStr(endereco.endereco, cliAddr?.endereco),
-      enderecoNro: pickStr(endereco.numero, cliAddr?.numero),
+      numero: pickStr(endereco.numero, cliAddr?.numero),
       complemento: pickStr(endereco.complemento, cliAddr?.complemento),
       bairro: pickStr(endereco.bairro, cliAddr?.bairro),
-      municipio: pickStr(endereco.cidade, cliAddr?.cidade),
       cep: pickStr(endereco.cep, cliAddr?.cep).replace(/\D/g, ''),
+      cidade: pickStr(endereco.cidade, cliAddr?.cidade),
       uf: ufTiny,
     }
-    const ufValida = /^[A-Z]{2}$/.test(enderecoTiny.uf)
+    const ufValida = /^[A-Z]{2}$/.test(clienteV2.uf)
 
     const normalizedItems = normalizeItems(body?.itens || [])
-    const itensV3 = normalizedItems
-      .map((it: any) => {
-        const productId = it?.produto_id ? Number(it.produto_id) : null
-        if (!productId || Number.isNaN(productId)) return null
-        return {
-          produto: { id: productId, tipo: 'P' },
-          quantidade: Number(it.quantidade || 0),
-          valorUnitario: Number(it.preco || 0),
-        }
-      })
-      .filter(Boolean)
+    const itensV2 = normalizedItems.map((it: any) => ({
+      item: {
+        codigo: it.codigo ? String(it.codigo) : '',
+        descricao: String(it.nome || 'Produto'),
+        unidade: String(it.unidade || 'UN'),
+        quantidade: String(Number(it.quantidade || 0)),
+        valor_unitario: String(Number(it.preco || 0).toFixed(2).replace(/,/g, '.')),
+      },
+    }))
 
-    if (itensV3.length === 0) {
+    if (itensV2.length === 0) {
       return NextResponse.json(
-        { ok: false, error: 'Itens do pedido sem produto_id para API v3. Selecione produtos com vínculo de ID.' },
+        { ok: false, error: 'Itens do pedido ausentes ou inválidos.' },
         { status: 400 }
       )
     }
@@ -423,41 +432,54 @@ export async function POST(req: Request) {
       )
     }
 
-    const pedidoV3: any = {
-      data: toIsoDate(body?.data),
-      valorDesconto: 0,
-      valorFrete: 0,
-      valorOutrasDespesas: 0,
-      itens: itensV3,
-      ecommerce: {
-        numeroPedidoEcommerce: String(body?.numero || numeroInput || ''),
-      },
-    }
-    /** Só envia se UF for 2 letras (API Tiny: "UF inválida" para string vazia). */
-    if (ufValida) {
-      pedidoV3.enderecoEntrega = enderecoTiny
-    }
-    pedidoV3.idContato = idContato
-    pedidoV3.vendedor = { id: vendedorTinyId }
-    if (body?.pagamento && typeof body.pagamento === 'object') {
-      pedidoV3.pagamento = body.pagamento
+    const pedidoV2Obj: any = {
+      data_pedido: formatBrDate(toIsoDate(body?.data)),
+      cliente: ufValida ? clienteV2 : { ...clienteV2, uf: '' },
+      itens: itensV2,
+      parcelas: (Array.isArray(body?.pagamento?.parcelas) ? body.pagamento.parcelas : []).map((p: any) => ({
+        parcela: {
+          dias: String(p?.dias ?? ''),
+          data: p?.data ? formatBrDate(String(p.data)) : '',
+          valor: String(Number(p?.valor || 0).toFixed(2).replace(/,/g, '.')),
+          obs: '',
+          forma_pagamento: String(forma_recebimento || '').toLowerCase() || 'boleto',
+        },
+      })),
+      numero_pedido_ecommerce: String(body?.numero || numeroInput || ''),
+      forma_pagamento: String(forma_recebimento || '').toLowerCase() || 'multiplas',
+      condicao_pagamento: String(condicao_pagamento || ''),
+      id_vendedor: String(vendedorTinyId),
     }
 
-    const resTiny = await tinyV3Fetch('/pedidos', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(pedidoV3),
+    const pedidoParamJson = JSON.stringify({ pedido: pedidoV2Obj })
+
+    const dataTiny = await tinyV2Post('pedido.incluir.php', {
+      pedido: pedidoParamJson,
     })
-    const dataTiny = await resTiny.json().catch(() => null)
 
-      // Try to extract Tiny-assigned order number and id
-      let tinyNumero: string | null = null
-      let tinyId: number | null = null
-      try {
-        if (dataTiny?.numeroPedido) tinyNumero = String(dataTiny.numeroPedido)
-        if (dataTiny?.id) tinyId = Number(dataTiny.id)
-      } catch (e) {
-        // ignore extraction errors
+      const retorno = dataTiny?.retorno
+      const topStatus = String(retorno?.status || '')
+      const reg = retorno?.registros?.registro ?? retorno?.registros?.[0]?.registro ?? null
+      const regStatus = String(reg?.status || '')
+      const tinyNumero = reg?.numero != null ? String(reg.numero) : null
+      const tinyId = reg?.id != null ? Number(reg.id) : null
+
+      if (topStatus !== 'OK' || regStatus !== 'OK' || !tinyNumero) {
+        const msg =
+          Array.isArray(retorno?.erros) && retorno.erros.length > 0
+            ? String(retorno.erros[0]?.erro || '')
+            : Array.isArray(reg?.erros) && reg.erros.length > 0
+              ? String(reg.erros[0]?.erro || '')
+              : 'Falha ao incluir pedido no Tiny (v2)'
+        return NextResponse.json(
+          {
+            ok: false,
+            error: msg,
+            tinyResponse: dataTiny,
+            sentObject: { pedido: pedidoV2Obj },
+          },
+          { status: 400 }
+        )
       }
 
       // If Tiny returned a numero, persist (create or update) the platform_order with that numero
@@ -481,8 +503,8 @@ export async function POST(req: Request) {
         const baseOrderData: any = {
           numero: platformNumero,
           data: dataStr ? new Date(dataStr) : new Date(),
-          cliente: ((rawCliente?.nome as string) ?? (body?.cliente || '')).toString(),
-          cnpj: ((rawCliente?.cpf_cnpj as string) ?? (body?.cnpj || '')).toString(),
+          cliente: String((rawCliente?.nome as string) ?? (body?.cliente || '')).toString(),
+          cnpj: String((rawCliente?.cpf_cnpj as string) ?? (body?.cnpj || '')).toString(),
           total: total,
           status: platformStatus,
           forma_recebimento,
@@ -491,6 +513,7 @@ export async function POST(req: Request) {
           id_vendedor_externo: id_vendedor_externo,
           id_client_externo: idContatoDb,
           client_vendor_externo: client_vendor_externo,
+          sistema_origem: 'sama',
         }
         // do not store tiny_id directly on platform_order (no such column)
 
@@ -563,14 +586,11 @@ export async function POST(req: Request) {
         }
 
         // Return Tiny response + platform numero
-        return NextResponse.json(
-          { ok: true, tinyResponse: dataTiny, sentObject: pedidoV3, numero: platformNumero },
-          { status: resTiny.ok ? 200 : resTiny.status }
-        )
+        return NextResponse.json({ ok: true, tinyResponse: dataTiny, sentObject: { pedido: pedidoV2Obj }, numero: platformNumero })
       }
 
       // If no numero from Tiny, just return its response for inspection
-      return NextResponse.json({ ok: true, tinyResponse: dataTiny, sentObject: pedidoV3 }, { status: resTiny.ok ? 200 : resTiny.status })
+      return NextResponse.json({ ok: true, tinyResponse: dataTiny, sentObject: { pedido: pedidoV2Obj } })
   } catch (error: any) {
     return NextResponse.json({ ok: false, error: error?.message ?? 'Erro ao salvar pedido' }, { status: 500 })
   }

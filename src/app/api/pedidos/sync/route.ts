@@ -1,102 +1,116 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { tinyV3Fetch } from '@/lib/tinyOAuth'
+import { tinyV2Post } from '@/lib/tinyOAuth'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 type TinyPedidoListItem = {
-  id?: number
-  situacao?: number
-  numeroPedido?: number
-  dataCriacao?: string
-  cliente?: {
-    nome?: string
-    cpfCnpj?: string
-    id?: number
-  }
+  id?: number | string
+  numero?: number | string
+  data_pedido?: string
+  nome?: string
   valor?: string | number
-  vendedor?: {
-    id?: number
-  }
+  id_vendedor?: number | string
+  situacao?: string
 }
 
 function toIsoDate(input: unknown) {
   const raw = String(input || '').trim()
   if (!raw) return new Date().toISOString().slice(0, 10)
+  const brDateMatch = raw.match(/^(\d{2})\/(\d{2})\/(\d{4})$/)
+  if (brDateMatch) {
+    const [, dd, mm, yyyy] = brDateMatch
+    return `${yyyy}-${mm}-${dd}`
+  }
   return raw.slice(0, 10)
 }
 
-function mapTinySituacaoToPedidoStatus(situacao: number | null | undefined) {
-  const code = Number(situacao ?? -1)
-  // Mapping based on Tiny status table provided by business:
-  // 8 Dados Incompletos, 0 Aberta, 3 Aprovada, 4 Preparando Envio,
-  // 1 Faturada, 7 Pronto Envio, 5 Enviada, 6 Entregue, 2 Cancelada, 9 Nao Entregue.
-  const map: Record<number, 'APROVADO' | 'PENDENTE' | 'FATURADO' | 'ENVIADO' | 'ENTREGUE' | 'CANCELADO' | 'DADOS_INCOMPLETOS'> = {
-    0: 'PENDENTE',          // Aberta
-    1: 'FATURADO',          // Faturada
-    2: 'CANCELADO',         // Cancelada
-    3: 'APROVADO',          // Aprovada
-    4: 'PENDENTE',          // Preparando Envio
-    5: 'ENVIADO',           // Enviada
-    6: 'ENTREGUE',          // Entregue
-    7: 'ENVIADO',           // Pronto Envio
-    8: 'DADOS_INCOMPLETOS', // Dados Incompletos
-    9: 'CANCELADO',         // Nao Entregue (aproximação para status interno existente)
-  }
-  return map[code] ?? 'PENDENTE'
+function currentDateBr() {
+  const now = new Date()
+  const dd = String(now.getDate()).padStart(2, '0')
+  const mm = String(now.getMonth() + 1).padStart(2, '0')
+  const yyyy = String(now.getFullYear())
+  return `${dd}/${mm}/${yyyy}`
 }
 
-async function fetchTinyPage(limit: number, offset: number) {
-  const path = `/pedidos?limit=${encodeURIComponent(String(limit))}&offset=${encodeURIComponent(String(offset))}`
-  const res = await tinyV3Fetch(path, { method: 'GET' })
-  const json = await res.json().catch(() => null)
-  if (!res.ok) {
-    throw new Error(`tiny_v3_list_failed: status=${res.status}`)
+function mapTinySituacaoToPedidoStatus(situacao: string | null | undefined) {
+  const normalized = String(situacao || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+  if (!normalized) return 'PENDENTE'
+  if (normalized.includes('incomplet')) return 'DADOS_INCOMPLETOS'
+  if (normalized.includes('cancel') || normalized.includes('nao entregue')) return 'CANCELADO'
+  if (normalized.includes('entreg')) return 'ENTREGUE'
+  if (normalized.includes('enviad') || normalized.includes('pronto envio')) return 'ENVIADO'
+  if (normalized.includes('fatur') || normalized.includes('atendid')) return 'FATURADO'
+  if (normalized.includes('aprov')) return 'APROVADO'
+  return 'PENDENTE'
+}
+
+async function fetchTinyPage(pageNumber: number) {
+  const json = await tinyV2Post('pedidos.pesquisa.php', {
+    pagina: pageNumber,
+    dataInicial: '01/01/2000',
+    dataFinal: currentDateBr(),
+    sort: 'ASC',
+  })
+  const retorno = json?.retorno
+  const status = String(retorno?.status || '')
+  if (status !== 'OK') {
+    const codigoErro = Number(retorno?.codigo_erro || 0)
+    if (codigoErro === 20) {
+      return { itens: [] as TinyPedidoListItem[], totalPages: 0 }
+    }
+    const firstError =
+      Array.isArray(retorno?.erros) && retorno.erros.length > 0
+        ? String(retorno.erros[0]?.erro || '')
+        : ''
+    throw new Error(firstError || 'tiny_v2_list_failed')
   }
-  const itens = Array.isArray(json?.itens) ? json.itens : []
-  const total = Number(json?.paginacao?.total ?? 0)
-  return { itens: itens as TinyPedidoListItem[], total }
+  const pedidosRaw = Array.isArray(retorno?.pedidos) ? retorno.pedidos : []
+  const itens = pedidosRaw.map((item: any) => item?.pedido).filter(Boolean) as TinyPedidoListItem[]
+  const totalPages = Number(retorno?.numero_paginas || 1)
+  return { itens, totalPages }
 }
 
 export async function POST() {
   try {
-    const limit = 100
-    let offset = 0
-    let total = 0
+    let pagina = 1
+    let totalPages = 1
     const all: TinyPedidoListItem[] = []
 
     do {
-      const page = await fetchTinyPage(limit, offset)
-      total = page.total
+      const page = await fetchTinyPage(pagina)
+      totalPages = page.totalPages
       if (page.itens.length === 0) break
       all.push(...page.itens)
-      offset += limit
-    } while (offset < total)
+      pagina += 1
+    } while (pagina <= totalPages)
 
     await prisma.platform_order.deleteMany()
 
     const parsedRows = all
       .map((row) => {
         const tinyId = Number(row?.id || 0)
-        const numero = Number(row?.numeroPedido || 0)
+        const numero = Number(row?.numero || 0)
         if (!(tinyId > 0) || !(numero > 0)) return null
 
-        const idClientExterno =
-          row?.cliente?.id != null && Number(row.cliente.id) > 0
-            ? BigInt(String(row.cliente.id))
-            : null
+        const idClientExterno = null
 
         return {
           numero,
           tiny_id: tinyId,
-          data: new Date(toIsoDate(row?.dataCriacao)),
-          cliente: String(row?.cliente?.nome || 'Cliente não informado'),
-          cnpj: String(row?.cliente?.cpfCnpj || ''),
+          data: new Date(toIsoDate(row?.data_pedido)),
+          cliente: String(row?.nome || 'Cliente não informado'),
+          cnpj: '',
           total: Number(row?.valor || 0),
           status: mapTinySituacaoToPedidoStatus(row?.situacao) as any,
-          id_vendedor_externo: row?.vendedor?.id != null ? String(row.vendedor.id) : null,
+          id_vendedor_externo: row?.id_vendedor != null ? String(row.id_vendedor) : null,
           id_client_externo: idClientExterno,
+          sistema_origem: 'tiny',
         }
       })
       .filter(Boolean) as Array<{
@@ -109,6 +123,7 @@ export async function POST() {
       status: any
       id_vendedor_externo: string | null
       id_client_externo: bigint | null
+      sistema_origem: 'tiny'
     }>
 
     const clientIds = Array.from(
