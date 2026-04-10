@@ -3,8 +3,7 @@ import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
 import { options } from '@/app/api/auth/[...nextauth]/options'
 import { Prisma } from '@prisma/client'
-
-const EMPRESA_IDS = new Set(['ff-lima', 'alianca-matriz'])
+import { EMPRESA_IDS } from '@/constants/empresas-suprimentos'
 
 type ParcelaIn = {
   dias?: number
@@ -22,6 +21,7 @@ type ItemIn = {
   informacoesAdicionais?: string
   aliquotaIPI?: number
   valorICMS?: number
+  valorST?: number
 }
 
 function toDateOnly(s: string | undefined): Date | null {
@@ -38,7 +38,8 @@ function itemLineTotalDec(it: ItemIn, q: number, vu: number): Prisma.Decimal {
   const ipiVal = sub.mul(ipiPct).div(100)
   const icmsNum =
     it.valorICMS != null && Number.isFinite(Number(it.valorICMS)) ? Number(it.valorICMS) : 0
-  return sub.add(ipiVal).add(new Prisma.Decimal(icmsNum))
+  const stNum = it.valorST != null && Number.isFinite(Number(it.valorST)) ? Number(it.valorST) : 0
+  return sub.add(ipiVal).add(new Prisma.Decimal(icmsNum)).add(new Prisma.Decimal(stNum))
 }
 
 export async function GET(req: Request) {
@@ -87,6 +88,7 @@ export async function GET(req: Request) {
         valor: it.valor.toString(),
         aliquota_ipi: it.aliquota_ipi?.toString() ?? null,
         valor_icms: it.valor_icms?.toString() ?? null,
+        valor_st: it.valor_st?.toString() ?? null,
       })),
     }))
 
@@ -152,6 +154,7 @@ export async function POST(req: Request) {
       informacoes_adicionais: string | null
       aliquota_ipi: Prisma.Decimal | null
       valor_icms: Prisma.Decimal | null
+      valor_st: Prisma.Decimal | null
     }[] = []
 
     let bruto = new Prisma.Decimal(0)
@@ -188,6 +191,10 @@ export async function POST(req: Request) {
             it.valorICMS != null && Number.isFinite(Number(it.valorICMS))
               ? new Prisma.Decimal(Number(it.valorICMS))
               : null,
+          valor_st:
+            it.valorST != null && Number.isFinite(Number(it.valorST))
+              ? new Prisma.Decimal(Number(it.valorST))
+              : null,
         })
         bruto = bruto.add(itemLineTotalDec(it, q, vu))
         continue
@@ -220,6 +227,10 @@ export async function POST(req: Request) {
             it.valorICMS != null && Number.isFinite(Number(it.valorICMS))
               ? new Prisma.Decimal(Number(it.valorICMS))
               : null,
+          valor_st:
+            it.valorST != null && Number.isFinite(Number(it.valorST))
+              ? new Prisma.Decimal(Number(it.valorST))
+              : null,
         })
       } else {
         if (!nomeTiny) {
@@ -243,6 +254,10 @@ export async function POST(req: Request) {
           valor_icms:
             it.valorICMS != null && Number.isFinite(Number(it.valorICMS))
               ? new Prisma.Decimal(Number(it.valorICMS))
+              : null,
+          valor_st:
+            it.valorST != null && Number.isFinite(Number(it.valorST))
+              ? new Prisma.Decimal(Number(it.valorST))
               : null,
         })
       }

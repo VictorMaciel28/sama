@@ -4,6 +4,70 @@ import { EMPRESAS_SUPRIMENTOS, labelEmpresa } from '@/constants/empresas-suprime
 import { formatCnpjDisplay } from '@/lib/cnpjFormat'
 import { parcelasFromCondicaoText } from '@/lib/suprimentosParcelas'
 
+/** #122c4f — barras de cabeçalho das tabelas */
+const TABLE_HEAD_COLOR: [number, number, number] = [18, 44, 79]
+
+/** Logo em `public/` — URL fixa evita 404 do `/_next/static/media/*.hash.png` no fetch do PDF. */
+const LOGO_PUBLIC_URL = '/alianca-logo.png'
+
+async function fetchDataUrl(url: string): Promise<string> {
+  const res = await fetch(url)
+  const blob = await res.blob()
+  return new Promise((resolve, reject) => {
+    const r = new FileReader()
+    r.onload = () => resolve(r.result as string)
+    r.onerror = () => reject(new Error('leitura da logo'))
+    r.readAsDataURL(blob)
+  })
+}
+
+/** Zoom no centro da logo (>1 = aproxima o miolo; a “borda” circular do desenho fica visualmente menor). */
+const LOGO_CENTER_ZOOM = 1.55
+
+/**
+ * Recorta o centro em quadrado, aplica zoom no miolo e máscara circular.
+ */
+function applyCircularLogoToImageDataUrl(dataUrl: string): Promise<{ dataUrl: string; aspect: number }> {
+  return new Promise((resolve, reject) => {
+    if (typeof document === 'undefined') {
+      resolve({ dataUrl, aspect: 1 })
+      return
+    }
+    const img = new Image()
+    img.onload = () => {
+      const w = img.naturalWidth
+      const h = img.naturalHeight
+      const s = Math.min(w, h)
+      const crop = Math.max(1, s / LOGO_CENTER_ZOOM)
+      const sx = (w - crop) / 2
+      const sy = (h - crop) / 2
+
+      const canvas = document.createElement('canvas')
+      canvas.width = s
+      canvas.height = s
+      const ctx = canvas.getContext('2d', { alpha: true })
+      if (!ctx) {
+        resolve({ dataUrl, aspect: 1 })
+        return
+      }
+
+      ctx.fillStyle = '#ffffff'
+      ctx.fillRect(0, 0, s, s)
+      ctx.save()
+      ctx.beginPath()
+      ctx.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2)
+      ctx.clip()
+      /* Amostra uma região central menor e estica para s×s = zoom no centro. */
+      ctx.drawImage(img, sx, sy, crop, crop, 0, 0, s, s)
+      ctx.restore()
+
+      resolve({ dataUrl: canvas.toDataURL('image/png'), aspect: 1 })
+    }
+    img.onerror = () => reject(new Error('imagem da logo'))
+    img.src = dataUrl
+  })
+}
+
 export type PurchaseOrderPdfItem = {
   quantidade: string
   valor: string
@@ -11,6 +75,8 @@ export type PurchaseOrderPdfItem = {
   produto_nome: string | null
   aliquota_ipi: string | null
   valor_icms: string | null
+  /** ICMS ST (substituição tributária), valor em R$ por linha. */
+  valor_st: string | null
   informacoes_adicionais: string | null
   product: { code: string; name: string } | null
 }
@@ -65,7 +131,12 @@ function lineIpiValue(it: PurchaseOrderPdfItem): number {
 }
 
 function lineTotal(it: PurchaseOrderPdfItem): number {
-  return lineBase(it) + lineIpiValue(it) + (Number(it.valor_icms) || 0)
+  return (
+    lineBase(it) +
+    lineIpiValue(it) +
+    (Number(it.valor_icms) || 0) +
+    (Number(it.valor_st) || 0)
+  )
 }
 
 function getFinalY(doc: jsPDF, fallback: number): number {
@@ -117,10 +188,22 @@ function normalizeParcelasRows(
 }
 
 /** Gera e baixa o PDF do pedido de compra no navegador. */
-export function downloadPurchaseOrderPdf(detail: PurchaseOrderPdfDetail, options?: PurchaseOrderPdfOptions) {
+export async function downloadPurchaseOrderPdf(
+  detail: PurchaseOrderPdfDetail,
+  options?: PurchaseOrderPdfOptions
+) {
   const doc = new jsPDF({ format: 'a4', unit: 'mm' })
   const margin = 14
+  const pageW = doc.internal.pageSize.getWidth()
   let y = margin
+
+  let logo: { dataUrl: string; aspect: number } | null = null
+  try {
+    const raw = await fetchDataUrl(LOGO_PUBLIC_URL)
+    logo = await applyCircularLogoToImageDataUrl(raw)
+  } catch {
+    logo = null
+  }
 
   const empresa = EMPRESAS_SUPRIMENTOS.find((e) => e.id === detail.empresa_id)
 
@@ -128,6 +211,14 @@ export function downloadPurchaseOrderPdf(detail: PurchaseOrderPdfDetail, options
   doc.setFont('helvetica', 'bold')
   doc.text(`Pedido de compra #${detail.id}`, margin, y)
   doc.setFont('helvetica', 'normal')
+
+  if (logo) {
+    const logoWmm = 38
+    const logoHmm = logoWmm / logo.aspect
+    const logoX = pageW - margin - logoWmm
+    doc.addImage(logo.dataUrl, 'PNG', logoX, margin - 1, logoWmm, logoHmm)
+  }
+
   y += 9
 
   doc.setFontSize(10)
@@ -154,6 +245,7 @@ export function downloadPurchaseOrderPdf(detail: PurchaseOrderPdfDetail, options
   const sumBase = items.reduce((a, it) => a + lineBase(it), 0)
   const sumIpi = items.reduce((a, it) => a + lineIpiValue(it), 0)
   const sumIcms = items.reduce((a, it) => a + (Number(it.valor_icms) || 0), 0)
+  const sumSt = items.reduce((a, it) => a + (Number(it.valor_st) || 0), 0)
   const sumItensComImpostos = items.reduce((a, it) => a + lineTotal(it), 0)
 
   const body = items.map((it) => {
@@ -164,6 +256,7 @@ export function downloadPurchaseOrderPdf(detail: PurchaseOrderPdfDetail, options
     const ipiPct = Number(it.aliquota_ipi) || 0
     const vIpi = lineIpiValue(it)
     const vIcms = Number(it.valor_icms) || 0
+    const vSt = Number(it.valor_st) || 0
     const tot = lineTotal(it)
     return [
       String(cod),
@@ -173,25 +266,30 @@ export function downloadPurchaseOrderPdf(detail: PurchaseOrderPdfDetail, options
       fmtPct(ipiPct),
       vIpi > 0 || ipiPct > 0 ? fmtMoney(vIpi) : '—',
       vIcms > 0 ? fmtMoney(vIcms) : '—',
+      vSt > 0 ? fmtMoney(vSt) : '—',
       fmtMoney(tot),
     ]
   })
 
   autoTable(doc, {
     startY: y,
-    head: [['Cód.', 'Produto', 'Qtd', 'Vl. unit.', '% IPI', 'Vl. IPI', 'ICMS', 'Total']],
+    head: [['Cód.', 'Produto', 'Qtd', 'Vl. unit.', '% IPI', 'Vl. IPI', 'ICMS', 'ST', 'Total']],
     body,
     styles: { fontSize: 7, cellPadding: 1.2 },
-    headStyles: { fillColor: [66, 66, 66] },
+    headStyles: {
+      fillColor: TABLE_HEAD_COLOR,
+      textColor: [255, 255, 255],
+    },
     columnStyles: {
       0: { cellWidth: 16 },
-      1: { cellWidth: 52 },
+      1: { cellWidth: 46 },
       2: { cellWidth: 10, halign: 'right' },
-      3: { cellWidth: 20, halign: 'right' },
-      4: { cellWidth: 14, halign: 'right' },
-      5: { cellWidth: 20, halign: 'right' },
-      6: { cellWidth: 18, halign: 'right' },
-      7: { cellWidth: 22, halign: 'right' },
+      3: { cellWidth: 18, halign: 'right' },
+      4: { cellWidth: 12, halign: 'right' },
+      5: { cellWidth: 18, halign: 'right' },
+      6: { cellWidth: 16, halign: 'right' },
+      7: { cellWidth: 16, halign: 'right' },
+      8: { cellWidth: 20, halign: 'right' },
     },
     margin: { left: margin, right: margin },
   })
@@ -231,6 +329,8 @@ export function downloadPurchaseOrderPdf(detail: PurchaseOrderPdfDetail, options
   doc.text(`Total IPI: ${fmtMoney(sumIpi)}`, colL, yL)
   yL += lineH
   doc.text(`Total ICMS: ${fmtMoney(sumIcms)}`, colL, yL)
+  yL += lineH
+  doc.text(`Total ST: ${fmtMoney(sumSt)}`, colL, yL)
   yL += lineH
   doc.setFont('helvetica', 'bold')
   doc.text(`Subtotal dos produtos (com impostos): ${fmtMoney(sumItensComImpostos)}`, colL, yL)
@@ -284,7 +384,10 @@ export function downloadPurchaseOrderPdf(detail: PurchaseOrderPdfDetail, options
       head: [['N° parcela', 'Valor', 'Data de vencimento', 'Meio de pagamento']],
       body: pBody,
       styles: { fontSize: 8, cellPadding: 1.5 },
-      headStyles: { fillColor: [66, 66, 66] },
+      headStyles: {
+        fillColor: TABLE_HEAD_COLOR,
+        textColor: [255, 255, 255],
+      },
       columnStyles: {
         0: { cellWidth: 26 },
         1: { cellWidth: 32, halign: 'right' },

@@ -3,8 +3,9 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Button, Modal } from 'react-bootstrap'
-import { EMPRESAS_SUPRIMENTOS, labelEmpresa } from '@/constants/empresas-suprimentos'
+import { findEmpresaById } from '@/constants/empresas-suprimentos'
 import { downloadPurchaseOrderPdf, type PurchaseOrderPdfDetail } from '@/lib/purchaseOrderPdf'
+import { EmpresaSelect } from './EmpresaSelect'
 import { OrdemCompraForm } from './OrdemCompraForm'
 import { purchaseOrderApiToFormSnapshot } from './ordemCompraPrefill'
 import type { OrdemCompraFormSnapshot } from './ordemCompraFormTypes'
@@ -140,7 +141,7 @@ export default function OrdemCompraListPage() {
       } catch {
         /* mantém undefined; PDF usa "—" no meio de pagamento */
       }
-      downloadPurchaseOrderPdf(json.data as PurchaseOrderPdfDetail, { meioPagamentoLabel })
+      await downloadPurchaseOrderPdf(json.data as PurchaseOrderPdfDetail, { meioPagamentoLabel })
     } catch {
       /* noop */
     } finally {
@@ -191,18 +192,13 @@ export default function OrdemCompraListPage() {
           <div className="row g-2 align-items-end mb-3">
             <div className="col-12 col-md-3">
               <label className="form-label mb-0">Empresa</label>
-              <select
-                className="form-select form-select-sm"
+              <EmpresaSelect
                 value={empresa}
-                onChange={(e) => setEmpresa(e.target.value)}
-              >
-                <option value="">Todas</option>
-                {EMPRESAS_SUPRIMENTOS.map((e) => (
-                  <option key={e.id} value={e.id}>
-                    {e.label}
-                  </option>
-                ))}
-              </select>
+                onChange={setEmpresa}
+                allowEmpty
+                emptyLabel="Todas"
+                size="sm"
+              />
             </div>
             <div className="col-6 col-md-3">
               <label className="form-label mb-0">Data inicial</label>
@@ -252,7 +248,9 @@ export default function OrdemCompraListPage() {
                     </td>
                   </tr>
                 )}
-                {rows.map((r) => (
+                {rows.map((r) => {
+                  const empresaRow = findEmpresaById(r.empresa_id)
+                  return (
                   <tr
                     key={r.id}
                     role="button"
@@ -269,7 +267,16 @@ export default function OrdemCompraListPage() {
                   >
                     <td>{fmtDate(r.data)}</td>
                     <td>{fmtDate(r.data_prevista)}</td>
-                    <td>{labelEmpresa(r.empresa_id)}</td>
+                    <td>
+                      {empresaRow ? (
+                        <>
+                          <div className="fw-semibold small">{empresaRow.label}</div>
+                          <div className="text-muted small">{empresaRow.cnpj}</div>
+                        </>
+                      ) : (
+                        <span className="text-muted small">{r.empresa_id || '—'}</span>
+                      )}
+                    </td>
                     <td>{r.cliente?.nome || '—'}</td>
                     <td className="text-end">{fmtMoney(r.valor_total)}</td>
                     <td className="text-center" onClick={(e) => e.stopPropagation()}>
@@ -306,7 +313,8 @@ export default function OrdemCompraListPage() {
                       </div>
                     </td>
                   </tr>
-                ))}
+                  )
+                })}
               </tbody>
             </table>
           </div>

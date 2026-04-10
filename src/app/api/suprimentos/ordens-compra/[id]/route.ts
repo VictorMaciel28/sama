@@ -39,6 +39,7 @@ export async function GET(_req: Request, context: { params: { id: string } }) {
         valor: it.valor.toString(),
         aliquota_ipi: it.aliquota_ipi?.toString() ?? null,
         valor_icms: it.valor_icms?.toString() ?? null,
+        valor_st: it.valor_st?.toString() ?? null,
       })),
     }
 

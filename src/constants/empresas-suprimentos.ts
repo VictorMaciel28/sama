@@ -1,28 +1,62 @@
 /** Mesmas opções de “Enviar para Empresa” em Notas Fiscais (identificador + exibição). */
-export type EmpresaSuprimento = {
-  id: 'ff-lima' | 'alianca-matriz'
-  label: string
-  cnpj: string
-  /** Usado só na tela de NF-e (envio XML). */
-  apiKey: string
-}
-
-export const EMPRESAS_SUPRIMENTOS: EmpresaSuprimento[] = [
+export const EMPRESAS_SUPRIMENTOS = [
   {
     id: 'ff-lima',
-    label: 'FF Lima Parafusos e Ferramentas',
-    apiKey: '9b6cd0b8379346e7e7384b45f8e45e43cd2c142197b8e37385ea7c20211ec9b5',
+    label: 'Casa dos Parafusos F.f. Lima Parafusos e Ferramentas LTDA',
     cnpj: '30.961.214/0001-95',
+    apiKey: '',
+  },
+  {
+    id: 'ff-lima-filial',
+    label: 'F.f. Lima Parafusos e Ferramentas LTDA',
+    cnpj: '30.961.214/0003-57',
+    apiKey: '',
   },
   {
     id: 'alianca-matriz',
-    label: 'Aliança Mercantil Matriz',
-    apiKey: '505099465fb48df51dc1fc29400cac6b5e11e13864ac630a3cdd3ae9aa208533',
+    label: 'Alianca Mercantil Atacadista LTDA',
     cnpj: '43.589.635/0001-89',
+    apiKey: '',
   },
-]
+  {
+    id: 'alianca-filial',
+    label: 'Alianca Mercantil Atacadista LTDA',
+    cnpj: '43.589.635/0002-60',
+    apiKey: '',
+  },
+  {
+    id: 'r1',
+    label: 'Casa dos Parafusos R1 Parafusos e Ferramentas LTDA',
+    cnpj: '41.281.835/0001-44',
+    apiKey: '',
+  },
+  {
+    id: 'crisfer-matriz',
+    label: 'Casa dos Parafusos Crisfer Parafusos e Ferramentas LTDA',
+    cnpj: '28.114.510/0001-09',
+    apiKey: '',
+  },
+  {
+    id: 'crisfer-filial',
+    label: 'Crisfer Parafusos e Ferramentas LTDA',
+    cnpj: '28.114.510/0002-90',
+    apiKey: '',
+  },
+] as const
+
+export type EmpresaSuprimento = (typeof EMPRESAS_SUPRIMENTOS)[number]
+export type EmpresaSuprimentoId = EmpresaSuprimento['id']
+
+/** IDs aceitos em filtros e gravação de ordem de compra (API). */
+export const EMPRESA_IDS = new Set<string>(EMPRESAS_SUPRIMENTOS.map((e) => e.id))
 
 export function labelEmpresa(id: string | null | undefined): string {
   if (!id) return '—'
   return EMPRESAS_SUPRIMENTOS.find((e) => e.id === id)?.label ?? id
+}
+
+/** Dados da empresa para listagens (nome + CNPJ), igual ao padrão de cliente em pedidos. */
+export function findEmpresaById(id: string | null | undefined): EmpresaSuprimento | undefined {
+  if (!id) return undefined
+  return EMPRESAS_SUPRIMENTOS.find((e) => e.id === id)
 }

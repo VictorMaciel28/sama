@@ -509,6 +509,8 @@ model purchase_order_item {
   informacoes_adicionais String?  @db.Text
   aliquota_ipi           Decimal? @db.Decimal(15, 4)
   valor_icms             Decimal? @db.Decimal(15, 2)
+  /// ICMS ST (substituição tributária) em valor na linha.
+  valor_st               Decimal? @db.Decimal(15, 2)
 
   purchase_order purchase_order @relation(fields: [purchase_order_id], references: [id], onDelete: Cascade)
   product        product?       @relation(fields: [product_id], references: [id], onDelete: SetNull)

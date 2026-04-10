@@ -21,6 +21,8 @@ export type ItemRow = {
   informacoesAdicionais: string
   aliquotaIPI: number
   valorICMS: number
+  /** ICMS ST (substituição tributária), R$. */
+  valorST: number
 }
 
 /** Estado vindo de GET ordem ou vazio para tela nova. */

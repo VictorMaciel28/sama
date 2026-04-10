@@ -26,6 +26,7 @@ type ApiItem = {
   informacoes_adicionais?: string | null
   aliquota_ipi?: string | number | null
   valor_icms?: string | number | null
+  valor_st?: string | number | null
   product?: { code?: string; name?: string } | null
 }
 
@@ -58,6 +59,7 @@ function apiItemToRow(it: ApiItem): ItemRow {
       informacoesAdicionais: it.informacoes_adicionais ?? '',
       aliquotaIPI: Number(it.aliquota_ipi) || 0,
       valorICMS: Number(it.valor_icms) || 0,
+      valorST: Number(it.valor_st) || 0,
     }
   }
 
@@ -74,6 +76,7 @@ function apiItemToRow(it: ApiItem): ItemRow {
     informacoesAdicionais: it.informacoes_adicionais ?? '',
     aliquotaIPI: Number(it.aliquota_ipi) || 0,
     valorICMS: Number(it.valor_icms) || 0,
+    valorST: Number(it.valor_st) || 0,
   }
 }
 
@@ -122,7 +125,8 @@ export function purchaseOrderApiToFormSnapshot(raw: Record<string, unknown>): Or
     const ipiPct = Number(it.aliquotaIPI) || 0
     const ipi = base * (ipiPct / 100)
     const icms = Number(it.valorICMS) || 0
-    return a + base + ipi + icms
+    const st = Number(it.valorST) || 0
+    return a + base + ipi + icms + st
   }, 0)
   const total = Math.max(0, bruto + frete - desconto)
 

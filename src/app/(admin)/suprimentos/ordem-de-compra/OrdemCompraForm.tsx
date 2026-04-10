@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Card, Row, Col, Form, Button, Table } from 'react-bootstrap'
 import { EMPRESAS_SUPRIMENTOS } from '@/constants/empresas-suprimentos'
+import { EmpresaSelect } from './EmpresaSelect'
 import { formatCnpjDisplay, maskCnpjInput } from '@/lib/cnpjFormat'
 import { parcelasFromCondicaoText, type ParcelaForm } from '@/lib/suprimentosParcelas'
 import type {
@@ -30,7 +31,8 @@ function lineSubtotal(it: ItemRow): number {
   const ipiPct = Number(it.aliquotaIPI) || 0
   const ipi = base * (ipiPct / 100)
   const icms = Number(it.valorICMS) || 0
-  return base + ipi + icms
+  const st = Number(it.valorST) || 0
+  return base + ipi + icms + st
 }
 
 function todayYmd() {
@@ -288,6 +290,7 @@ export function OrdemCompraForm({
         informacoesAdicionais: '',
         aliquotaIPI: 0,
         valorICMS: 0,
+        valorST: 0,
       },
     ])
   }
@@ -315,6 +318,7 @@ export function OrdemCompraForm({
           informacoesAdicionais: '',
           aliquotaIPI: 0,
           valorICMS: 0,
+          valorST: 0,
         },
       ]
     })
@@ -355,6 +359,7 @@ export function OrdemCompraForm({
             valor: Number(it.valor) || 0,
             aliquotaIPI: it.aliquotaIPI || 0,
             valorICMS: it.valorICMS || 0,
+            valorST: it.valorST || 0,
           }
         : {
             produto: {
@@ -367,6 +372,7 @@ export function OrdemCompraForm({
             valor: Number(it.valor) || 0,
             aliquotaIPI: it.aliquotaIPI || 0,
             valorICMS: it.valorICMS || 0,
+            valorST: it.valorST || 0,
           }
     )
     if (itensPayload.length === 0) {
@@ -428,17 +434,12 @@ export function OrdemCompraForm({
             <Row className="g-3">
               <Col md={4}>
                 <Form.Label>Empresa</Form.Label>
-                <Form.Select
+                <EmpresaSelect
                   value={empresaId}
-                  onChange={(e) => setEmpresaId(e.target.value as (typeof EMPRESAS_SUPRIMENTOS)[number]['id'])}
-                  required
-                >
-                  {EMPRESAS_SUPRIMENTOS.map((e) => (
-                    <option key={e.id} value={e.id}>
-                      {e.label}
-                    </option>
-                  ))}
-                </Form.Select>
+                  onChange={(id) =>
+                    setEmpresaId(id as (typeof EMPRESAS_SUPRIMENTOS)[number]['id'])
+                  }
+                />
               </Col>
               <Col md={4}>
                 <Form.Label>Data</Form.Label>
@@ -636,6 +637,7 @@ export function OrdemCompraForm({
                         <th style={{ width: 120 }}>Valor un.</th>
                         <th style={{ width: 90 }}>IPI %</th>
                         <th style={{ width: 100 }}>ICMS R$</th>
+                        <th style={{ width: 90 }}>ST R$</th>
                         <th style={{ width: 44 }} />
                       </tr>
                     </thead>
@@ -720,6 +722,16 @@ export function OrdemCompraForm({
                               size="sm"
                               value={it.valorICMS}
                               onChange={(e) => setItem(it.rowId, { valorICMS: Number(e.target.value) })}
+                            />
+                          </td>
+                          <td>
+                            <Form.Control
+                              type="number"
+                              min={0}
+                              step="0.01"
+                              size="sm"
+                              value={it.valorST}
+                              onChange={(e) => setItem(it.rowId, { valorST: Number(e.target.value) })}
                             />
                           </td>
                           <td>
