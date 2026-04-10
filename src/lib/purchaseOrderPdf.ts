@@ -1,14 +1,19 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
-import { EMPRESAS_SUPRIMENTOS, labelEmpresa } from '@/constants/empresas-suprimentos'
+import {
+  EMPRESA_IDS_LOGO_ALIANCA_PDF,
+  EMPRESAS_SUPRIMENTOS,
+  labelEmpresa,
+} from '@/constants/empresas-suprimentos'
 import { formatCnpjDisplay } from '@/lib/cnpjFormat'
 import { parcelasFromCondicaoText } from '@/lib/suprimentosParcelas'
 
 /** #122c4f — barras de cabeçalho das tabelas */
 const TABLE_HEAD_COLOR: [number, number, number] = [18, 44, 79]
 
-/** Logo em `public/` — URL fixa evita 404 do `/_next/static/media/*.hash.png` no fetch do PDF. */
-const LOGO_PUBLIC_URL = '/alianca-logo.png'
+/** Logos em `public/` (mesmos arquivos que em `src/assets/images/*-sem-fundo.png`). */
+const LOGO_URL_ALIANCA = '/alianca-logo-sem-fundo.png'
+const LOGO_URL_OUTRAS = '/casa-dos-parafusos-verde-sem-fundo.png'
 
 async function fetchDataUrl(url: string): Promise<string> {
   const res = await fetch(url)
@@ -21,49 +26,19 @@ async function fetchDataUrl(url: string): Promise<string> {
   })
 }
 
-/** Zoom no centro da logo (>1 = aproxima o miolo; a “borda” circular do desenho fica visualmente menor). */
-const LOGO_CENTER_ZOOM = 1.55
-
-/**
- * Recorta o centro em quadrado, aplica zoom no miolo e máscara circular.
- */
-function applyCircularLogoToImageDataUrl(dataUrl: string): Promise<{ dataUrl: string; aspect: number }> {
+/** Largura ÷ altura para posicionar a logo no PDF sem distorcer. */
+function aspectRatioFromDataUrl(dataUrl: string): Promise<number> {
   return new Promise((resolve, reject) => {
     if (typeof document === 'undefined') {
-      resolve({ dataUrl, aspect: 1 })
+      resolve(1)
       return
     }
     const img = new Image()
     img.onload = () => {
-      const w = img.naturalWidth
-      const h = img.naturalHeight
-      const s = Math.min(w, h)
-      const crop = Math.max(1, s / LOGO_CENTER_ZOOM)
-      const sx = (w - crop) / 2
-      const sy = (h - crop) / 2
-
-      const canvas = document.createElement('canvas')
-      canvas.width = s
-      canvas.height = s
-      const ctx = canvas.getContext('2d', { alpha: true })
-      if (!ctx) {
-        resolve({ dataUrl, aspect: 1 })
-        return
-      }
-
-      ctx.fillStyle = '#ffffff'
-      ctx.fillRect(0, 0, s, s)
-      ctx.save()
-      ctx.beginPath()
-      ctx.arc(s / 2, s / 2, s / 2, 0, Math.PI * 2)
-      ctx.clip()
-      /* Amostra uma região central menor e estica para s×s = zoom no centro. */
-      ctx.drawImage(img, sx, sy, crop, crop, 0, 0, s, s)
-      ctx.restore()
-
-      resolve({ dataUrl: canvas.toDataURL('image/png'), aspect: 1 })
+      const h = Math.max(1, img.naturalHeight)
+      resolve(img.naturalWidth / h)
     }
-    img.onerror = () => reject(new Error('imagem da logo'))
+    img.onerror = () => reject(new Error('logo'))
     img.src = dataUrl
   })
 }
@@ -197,10 +172,15 @@ export async function downloadPurchaseOrderPdf(
   const pageW = doc.internal.pageSize.getWidth()
   let y = margin
 
+  const logoPublicUrl = EMPRESA_IDS_LOGO_ALIANCA_PDF.has(detail.empresa_id)
+    ? LOGO_URL_ALIANCA
+    : LOGO_URL_OUTRAS
+
   let logo: { dataUrl: string; aspect: number } | null = null
   try {
-    const raw = await fetchDataUrl(LOGO_PUBLIC_URL)
-    logo = await applyCircularLogoToImageDataUrl(raw)
+    const raw = await fetchDataUrl(logoPublicUrl)
+    const aspect = await aspectRatioFromDataUrl(raw)
+    logo = { dataUrl: raw, aspect }
   } catch {
     logo = null
   }
@@ -213,10 +193,11 @@ export async function downloadPurchaseOrderPdf(
   doc.setFont('helvetica', 'normal')
 
   if (logo) {
-    const logoWmm = 38
+    const logoWmm = 52
     const logoHmm = logoWmm / logo.aspect
     const logoX = pageW - margin - logoWmm
-    doc.addImage(logo.dataUrl, 'PNG', logoX, margin - 1, logoWmm, logoHmm)
+    const logoTopY = margin - 9
+    doc.addImage(logo.dataUrl, 'PNG', logoX, logoTopY, logoWmm, logoHmm)
   }
 
   y += 9

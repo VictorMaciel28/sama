@@ -50,6 +50,9 @@ export type EmpresaSuprimentoId = EmpresaSuprimento['id']
 /** IDs aceitos em filtros e gravação de ordem de compra (API). */
 export const EMPRESA_IDS = new Set<string>(EMPRESAS_SUPRIMENTOS.map((e) => e.id))
 
+/** Aliança (matriz/filial — CNPJ 43.589.635/0001-89 e 43.589.635/0002-60): logo no PDF da ordem de compra. */
+export const EMPRESA_IDS_LOGO_ALIANCA_PDF = new Set<string>(['alianca-matriz', 'alianca-filial'])
+
 export function labelEmpresa(id: string | null | undefined): string {
   if (!id) return '—'
   return EMPRESAS_SUPRIMENTOS.find((e) => e.id === id)?.label ?? id
