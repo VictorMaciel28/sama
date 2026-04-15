@@ -171,14 +171,38 @@ export async function GET(req: Request) {
       })
     }
 
+    /** Sincronização Tiny grava `id_client_externo` mas `platform_order.cnpj` pode vir vazio; o documento está em `cliente`. */
+    const extIdsNeedCnpj = Array.from(
+      new Set(
+        rows
+          .filter((r) => !String(r.cnpj || '').trim() && r.id_client_externo != null)
+          .map((r) => r.id_client_externo as bigint)
+      )
+    )
+    const cnpjByClienteExt = new Map<string, string>()
+    if (extIdsNeedCnpj.length > 0) {
+      const clin = await prisma.cliente.findMany({
+        where: { external_id: { in: extIdsNeedCnpj } },
+        select: { external_id: true, cpf_cnpj: true },
+      })
+      for (const c of clin) {
+        const doc = String(c.cpf_cnpj || '').trim()
+        if (doc) cnpjByClienteExt.set(String(c.external_id), doc)
+      }
+    }
+
     const data = rows.map((r) => {
       const orderVendor = r.id_vendedor_externo ?? null
       const clientVendor = r.client_vendor_externo ?? null
+      const cnpjStored = String(r.cnpj || '').trim()
+      const cnpjFromCliente =
+        r.id_client_externo != null ? cnpjByClienteExt.get(String(r.id_client_externo)) || '' : ''
+      const cnpj = cnpjStored || cnpjFromCliente
       return {
         numero: r.numero,
         data: r.data.toISOString().slice(0, 10),
         cliente: r.cliente,
-        cnpj: r.cnpj,
+        cnpj,
         sistema_origem: String(r.sistema_origem || 'sama').toLowerCase(),
         total: Number(r.total),
         status:
