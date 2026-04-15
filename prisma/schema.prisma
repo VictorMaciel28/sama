@@ -278,6 +278,8 @@ model payment {
   observation   String  @db.VarChar(2048)
   income        Int     @db.TinyInt
   serie         Int?
+  url_danfe_tiny      String? @db.VarChar(2048)
+  id_nota_fiscal_tiny String? @db.VarChar(50)
 
   @@unique([number, emiter, serie], map: "UNIQUE_NUMBER")
 }

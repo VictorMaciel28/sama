@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { tinyV2Post } from '@/lib/tinyOAuth'
 import { upsertClienteFromTinyObterPayload } from '@/lib/tinyObterCliente'
 import { recomputeCommissionsForOrder } from '@/services/commission'
+import { persistTinyNotaFiscalOnPayment } from '@/lib/tinyNotaFiscalPayment'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -104,6 +105,16 @@ async function handle(req: NextRequest) {
     payload = JSON.parse(raw)
   } catch {
     return NextResponse.json({ ok: false, error: 'invalid_json' }, { status: 400 })
+  }
+
+  if (payload?.tipo === 'nota_fiscal') {
+    let paymentPersist: Awaited<ReturnType<typeof persistTinyNotaFiscalOnPayment>> | null = null
+    try {
+      paymentPersist = await persistTinyNotaFiscalOnPayment(payload?.dados)
+    } catch {
+      paymentPersist = { ok: false, reason: 'persist_error', count: 0 }
+    }
+    return NextResponse.json({ ok: true, nota_fiscal: true, payment_persist: paymentPersist })
   }
 
   if (payload?.tipo !== 'atualizacao_pedido') {

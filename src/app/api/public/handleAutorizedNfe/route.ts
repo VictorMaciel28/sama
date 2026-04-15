@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 // @ts-ignore
 import nodemailer from 'nodemailer'
 import { prisma } from '@/lib/prisma'
+import { PAYMENT_EMITER_ALIANCA, persistTinyNotaFiscalOnPayment } from '@/lib/tinyNotaFiscalPayment'
 
 export const runtime = 'nodejs'
 
@@ -49,6 +50,14 @@ function onlyDigits(v: string | null | undefined) {
 function toNumberSafe(v: any): number {
   const n = Number(v)
   return Number.isFinite(n) ? n : 0
+}
+
+function escapeHtml(s: string) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
 }
 
 function extractOrderCandidates(webhookPayload: any, nota: any): number[] {
@@ -169,9 +178,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: false, error: 'invalid_json' }, { status: 400 })
   }
 
+  let paymentPersist: Awaited<ReturnType<typeof persistTinyNotaFiscalOnPayment>> | null = null
+  try {
+    paymentPersist = await persistTinyNotaFiscalOnPayment(json?.dados, PAYMENT_EMITER_ALIANCA)
+  } catch {
+    paymentPersist = { ok: false, reason: 'persist_error', count: 0 }
+  }
+
   const idNotaFiscal = json?.dados?.idNotaFiscalTiny
   if (!idNotaFiscal) {
-    return NextResponse.json({ ok: true, message: 'no idNotaFiscalTiny' })
+    return NextResponse.json({ ok: true, message: 'no idNotaFiscalTiny', payment_persist: paymentPersist })
   }
 
   const token = process.env.TINY_API_TOKEN || ''
@@ -209,7 +225,7 @@ export async function POST(req: NextRequest) {
   }
 
   const numero = nota.numero ?? ''
-  const emiter = 'L1 ALIANCA MERCANTIL'
+  const emiter = PAYMENT_EMITER_ALIANCA
   const destine = nota.cliente?.nome ?? ''
   const formaPagamento = String((nota.forma_pagamento ?? nota.meio_pagamento) || '')
   const valor = nota.valor_nota ?? nota.total ?? 0
@@ -225,7 +241,7 @@ export async function POST(req: NextRequest) {
     (process.env.NEXT_PUBLIC_INTERNAL_URL ? `${process.env.NEXT_PUBLIC_INTERNAL_URL}/api/whatsapp` : '') ||
     'http://localhost:3000/api/whatsapp'
 
-  const results: any = { whatsapp: null, email: null }
+  const results: any = { whatsapp: null, email: null, payment_persist: paymentPersist }
 
   // attempt WhatsApp send
   try {
@@ -266,7 +282,14 @@ export async function POST(req: NextRequest) {
     })
 
     const subject = `Nota ${numero} emitida — ${valorFormatted}`
-    const html = `<p>${message}</p><p><strong>Chave de acesso:</strong> ${chave}</p>`
+    const danfeUrl =
+      String(json?.dados?.urlDanfe ?? '').trim() ||
+      String(nota?.url_danfe ?? nota?.link_pdf ?? nota?.linkDanfe ?? '').trim() ||
+      ''
+    let html = `<p>${escapeHtml(message)}</p><p><strong>Chave de acesso:</strong> ${escapeHtml(chave)}</p>`
+    if (danfeUrl) {
+      html += `<p><a href="${escapeHtml(danfeUrl)}">Download da nota (DANFE)</a></p>`
+    }
 
     const info = await transporter.sendMail({
       from,
