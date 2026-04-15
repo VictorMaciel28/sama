@@ -179,6 +179,8 @@ model platform_order {
   status               PedidoStatus
   forma_recebimento    String?       @db.VarChar(50)
   condicao_pagamento   String?       @db.VarChar(100)
+  /// UI: exibir/validar mínimo com juros (true) ou sem juros (false) nas condições de pagamento.
+  juros_ligado         Boolean       @default(true)
   endereco_entrega     Json?
   id_vendedor_externo  String?       @db.VarChar(100)
   id_client_externo    BigInt?       @db.UnsignedBigInt
@@ -608,8 +610,10 @@ model payment_condition {
   id           Int      @id @default(autoincrement())
   name         String   @db.VarChar(100) // e.g. "14/21D"
   percent      Decimal  @db.Decimal(5, 2) // administrative additional percent (e.g. 3.00)
-  /// Valor mínimo do pedido (BRL) para esta condição; null ou 0 = sem exigência.
-  valor_minimo Decimal? @db.Decimal(15, 2)
+  /// Valor mínimo do pedido (BRL) com taxa administrativa; null ou 0 = sem exigência.
+  valor_minimo          Decimal? @db.Decimal(15, 2)
+  /// Valor mínimo do pedido (BRL) sem taxa administrativa; null ou 0 = sem exigência.
+  valor_minimo_sem_taxa Decimal? @db.Decimal(15, 2)
   created_at   DateTime @default(now()) @db.DateTime(0)
 }
 

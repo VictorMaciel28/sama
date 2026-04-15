@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { tinyV2Post } from '@/lib/tinyOAuth'
+import { upsertClienteFromTinyObterPayload } from '@/lib/tinyObterCliente'
 import { recomputeCommissionsForOrder } from '@/services/commission'
 
 export const runtime = 'nodejs'
@@ -158,7 +159,20 @@ async function handle(req: NextRequest) {
         const clienteNome = String(tinyPedido?.cliente?.nome || '').trim()
         const clienteCpfCnpj = String(tinyPedido?.cliente?.cpf_cnpj || '').trim()
         const vendedorExterno = tinyPedido?.id_vendedor != null ? String(tinyPedido.id_vendedor).trim() : null
-        const idClientExterno = null
+        let idClientExterno: bigint | null = null
+        let clientVendorExterno: string | null = null
+        const tinyCli = tinyPedido?.cliente
+        if (tinyCli) {
+          const extId = await upsertClienteFromTinyObterPayload(prisma, tinyCli)
+          if (extId) {
+            const cli = await prisma.cliente.findUnique({
+              where: { external_id: extId },
+              select: { id_vendedor_externo: true },
+            })
+            idClientExterno = extId
+            clientVendorExterno = cli?.id_vendedor_externo ?? null
+          }
+        }
         const formaRecebimento = tinyPedido?.forma_pagamento ? String(tinyPedido.forma_pagamento) : null
         const condicaoPagamento = normalizeCondicaoPagamento(tinyPedido?.condicao_pagamento)
         const enderecoEntrega = buildEnderecoEntrega(tinyPedido)
@@ -180,6 +194,7 @@ async function handle(req: NextRequest) {
           endereco_entrega: enderecoEntrega,
           id_vendedor_externo: vendedorExterno,
           id_client_externo: idClientExterno,
+          client_vendor_externo: clientVendorExterno,
           tiny_id: tinyOrderId,
           id_nota_fiscal: notaFiscalId || null,
           sistema_origem: 'tiny',
@@ -239,10 +254,27 @@ async function handle(req: NextRequest) {
 
   if (tinyPedidoFromV2) {
     const enderecoEntrega = buildEnderecoEntrega(tinyPedidoFromV2)
-    if (enderecoEntrega) {
+    const patch: Record<string, unknown> = {}
+    if (enderecoEntrega) patch.endereco_entrega = enderecoEntrega
+    if (tinyPedidoFromV2.cliente) {
+      const extId = await upsertClienteFromTinyObterPayload(prisma, tinyPedidoFromV2.cliente)
+      if (extId) {
+        const cli = await prisma.cliente.findUnique({
+          where: { external_id: extId },
+          select: { id_vendedor_externo: true },
+        })
+        patch.id_client_externo = extId
+        patch.client_vendor_externo = cli?.id_vendedor_externo ?? null
+        const nome = String(tinyPedidoFromV2.cliente.nome || '').trim()
+        if (nome) patch.cliente = nome
+        const doc = String(tinyPedidoFromV2.cliente.cpf_cnpj || '').trim()
+        if (doc) patch.cnpj = doc
+      }
+    }
+    if (Object.keys(patch).length > 0) {
       await prisma.platform_order.update({
         where: { id: row.id },
-        data: { endereco_entrega: enderecoEntrega },
+        data: patch as any,
       })
     }
 

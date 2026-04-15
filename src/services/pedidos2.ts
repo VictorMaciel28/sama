@@ -16,6 +16,8 @@ export interface Pedido {
   client_vendor_nome?: string | null
   forma_recebimento?: string | null
   condicao_pagamento?: string | null
+  /** Persistido em platform_order; true = priorizar mínimo com juros na UI/validação. */
+  juros_ligado?: boolean | null
   endereco_entrega?: {
     endereco?: string
     numero?: string

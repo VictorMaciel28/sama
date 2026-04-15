@@ -257,6 +257,10 @@ export async function POST(req: Request) {
       body?.forma_recebimento != null ? body.forma_recebimento?.toString?.().trim?.() || null : null
     const condicao_pagamento: string | null =
       body?.condicao_pagamento != null ? body.condicao_pagamento?.toString?.().trim?.() || null : null
+    const juros_ligado =
+      body?.juros_ligado === false || body?.juros_ligado === 'false' || body?.juros_ligado === 0 || body?.juros_ligado === '0'
+        ? false
+        : true
     const endereco_entrega: any = body?.endereco_entrega && typeof body.endereco_entrega === 'object' ? body.endereco_entrega : null
 
     if (!cliente) return NextResponse.json({ ok: false, error: 'Cliente obrigatório' }, { status: 400 })
@@ -509,6 +513,7 @@ export async function POST(req: Request) {
           status: platformStatus,
           forma_recebimento,
           condicao_pagamento,
+          juros_ligado,
           endereco_entrega,
           id_vendedor_externo: id_vendedor_externo,
           id_client_externo: idContatoDb,

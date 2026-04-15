@@ -15,6 +15,7 @@ export async function GET() {
     }
 
     const externo = vend.id_vendedor_externo
+    /** Ausência de linha em `vendedor_tipo_acesso` não impede acesso: perfil vem de `vendedor_nivel_acesso`. */
     const tipoRow = await prisma.vendedor_tipo_acesso.findUnique({ where: { id_vendedor_externo: externo } })
     const tipo = tipoRow?.tipo ?? null
     const nivelRow = await prisma.vendedor_nivel_acesso

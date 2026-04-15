@@ -77,9 +77,107 @@ export async function GET() {
   }
 }
 
+async function applyTipoNivelAcesso(
+  id_vendedor_externo: string,
+  tipo_acesso: 'VENDEDOR' | 'TELEVENDAS' | null | undefined,
+  nivel_acesso: 'SUPERVISOR' | 'ADMINISTRADOR' | 'OPERADOR' | null | undefined,
+  hasTipoKey: boolean,
+  hasNivelKey: boolean
+) {
+  if (hasTipoKey) {
+    if (tipo_acesso === null) {
+      await prisma.vendedor_tipo_acesso.deleteMany({ where: { id_vendedor_externo } })
+    } else if (tipo_acesso) {
+      await prisma.vendedor_tipo_acesso.upsert({
+        where: { id_vendedor_externo },
+        update: { tipo: tipo_acesso as any },
+        create: { id_vendedor_externo, tipo: tipo_acesso as any },
+      })
+    }
+  }
+  if (hasNivelKey) {
+    if (nivel_acesso === null) {
+      await prisma.vendedor_nivel_acesso.deleteMany({ where: { id_vendedor_externo } })
+    } else if (nivel_acesso) {
+      await prisma.vendedor_nivel_acesso.upsert({
+        where: { id_vendedor_externo },
+        update: { nivel: nivel_acesso as any },
+        create: { id_vendedor_externo, nivel: nivel_acesso as any },
+      })
+    }
+  }
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json()
+
+    if (String(body?.action || '') === 'create') {
+      const nome = body?.nome?.toString?.().trim?.() || ''
+      const email = body?.email?.toString?.().trim?.() || ''
+      const password = typeof body?.password === 'string' ? body.password.trim() : ''
+      const id_vendedor_externo = body?.id_vendedor_externo?.toString?.().trim?.() || ''
+      if (!nome) return NextResponse.json({ ok: false, error: 'Nome é obrigatório' }, { status: 400 })
+      if (!email) return NextResponse.json({ ok: false, error: 'E-mail é obrigatório' }, { status: 400 })
+      if (!password) return NextResponse.json({ ok: false, error: 'Senha é obrigatória' }, { status: 400 })
+      if (!id_vendedor_externo) {
+        return NextResponse.json(
+          { ok: false, error: 'ID externo é obrigatório (mesmo ID do vendedor no Tiny ou um identificador manual único)' },
+          { status: 400 }
+        )
+      }
+      const dup = await prisma.vendedor.findFirst({
+        where: { OR: [{ email }, { id_vendedor_externo }] },
+        select: { id: true, email: true, id_vendedor_externo: true },
+      })
+      if (dup) {
+        const msg = dup.email === email ? 'E-mail já cadastrado' : 'ID externo já em uso'
+        return NextResponse.json({ ok: false, error: msg }, { status: 400 })
+      }
+      const hasTipoKey = Object.prototype.hasOwnProperty.call(body, 'tipo_acesso')
+      const hasNivelKey = Object.prototype.hasOwnProperty.call(body, 'nivel_acesso')
+      let tipo_acesso: 'VENDEDOR' | 'TELEVENDAS' | null | undefined
+      let nivel_acesso: 'SUPERVISOR' | 'ADMINISTRADOR' | 'OPERADOR' | null | undefined
+      if (hasTipoKey) {
+        const t = body.tipo_acesso
+        if (t == null || t === '') tipo_acesso = null
+        else if (t === 'VENDEDOR' || t === 'TELEVENDAS') tipo_acesso = t
+        else return NextResponse.json({ ok: false, error: 'tipo_acesso inválido' }, { status: 400 })
+      }
+      if (hasNivelKey) {
+        const n = body.nivel_acesso
+        if (n == null || n === '') nivel_acesso = null
+        else if (n === 'SUPERVISOR' || n === 'ADMINISTRADOR' || n === 'OPERADOR') nivel_acesso = n
+        else return NextResponse.json({ ok: false, error: 'nivel_acesso inválido' }, { status: 400 })
+      }
+      const created = await prisma.vendedor.create({
+        data: {
+          nome,
+          email,
+          id_vendedor_externo,
+          senha_encrypted: encryptPassword(password),
+          telefone: body?.telefone !== undefined ? emptyToNull(body.telefone) : null,
+          razao_social: body?.razao_social !== undefined ? emptyToNull(body.razao_social) : undefined,
+          endereco_razao: body?.endereco_razao !== undefined ? emptyToNull(body.endereco_razao) : undefined,
+          nome_representante: body?.nome_representante !== undefined ? emptyToNull(body.nome_representante) : undefined,
+          endereco_representante:
+            body?.endereco_representante !== undefined ? emptyToNull(body.endereco_representante) : undefined,
+          cpf_representante: body?.cpf_representante !== undefined ? emptyToNull(body.cpf_representante) : undefined,
+          identidade_representante:
+            body?.identidade_representante !== undefined ? emptyToNull(body.identidade_representante) : undefined,
+          conta_bancaria: body?.conta_bancaria !== undefined ? emptyToNull(body.conta_bancaria) : undefined,
+          pix: body?.pix !== undefined ? emptyToNull(body.pix) : undefined,
+          supervisor_responsavel_externo:
+            body?.supervisor_responsavel_externo !== undefined
+              ? emptyToNull(body.supervisor_responsavel_externo)
+              : undefined,
+          observacao: body?.observacao !== undefined ? emptyToNull(body.observacao) : undefined,
+        } as any,
+      })
+      await applyTipoNivelAcesso(id_vendedor_externo, tipo_acesso, nivel_acesso, hasTipoKey, hasNivelKey)
+      return NextResponse.json({ ok: true, id: created.id })
+    }
+
     const id: number | null = typeof body?.id === 'number' ? body.id : Number(body?.id) || null
     const nome: string | undefined = body?.nome?.toString?.().trim?.() || undefined
     const email: string | null | undefined =
@@ -176,28 +274,7 @@ export async function POST(req: Request) {
     }
 
     if (id_vendedor_externo) {
-      if (hasTipoKey) {
-        if (tipo_acesso === null) {
-          await prisma.vendedor_tipo_acesso.deleteMany({ where: { id_vendedor_externo } })
-        } else if (tipo_acesso) {
-          await prisma.vendedor_tipo_acesso.upsert({
-            where: { id_vendedor_externo },
-            update: { tipo: tipo_acesso as any },
-            create: { id_vendedor_externo, tipo: tipo_acesso as any },
-          })
-        }
-      }
-      if (hasNivelKey) {
-        if (nivel_acesso === null) {
-          await prisma.vendedor_nivel_acesso.deleteMany({ where: { id_vendedor_externo } })
-        } else if (nivel_acesso) {
-          await prisma.vendedor_nivel_acesso.upsert({
-            where: { id_vendedor_externo },
-            update: { nivel: nivel_acesso as any },
-            create: { id_vendedor_externo, nivel: nivel_acesso as any },
-          })
-        }
-      }
+      await applyTipoNivelAcesso(id_vendedor_externo, tipo_acesso, nivel_acesso, hasTipoKey, hasNivelKey)
     }
 
     if (password) {

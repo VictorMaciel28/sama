@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
 import { tinyV2Post } from '@/lib/tinyOAuth'
+import { upsertClienteFromTinyObterPayload } from '@/lib/tinyObterCliente'
 
 function toIsoDate(input: unknown) {
   const raw = String(input || '').trim()
@@ -66,6 +67,20 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
           const tinyVendedorId = tinyPedidoV2?.id_vendedor ? String(tinyPedidoV2.id_vendedor) : null
           const tinyData = toIsoDate(tinyPedidoV2?.data_pedido)
 
+          let idClientExterno: bigint | null = row.id_client_externo ?? null
+          let clientVendorExterno: string | null = row.client_vendor_externo ?? null
+          if (tinyCliente && Object.keys(tinyCliente).length > 0) {
+            const extId = await upsertClienteFromTinyObterPayload(prisma, tinyCliente)
+            if (extId) {
+              const cli = await prisma.cliente.findUnique({
+                where: { external_id: extId },
+                select: { id_vendedor_externo: true },
+              })
+              idClientExterno = extId
+              clientVendorExterno = cli?.id_vendedor_externo ?? null
+            }
+          }
+
           await prisma.platform_order.update({
             where: { numero: row.numero },
             data: {
@@ -88,6 +103,8 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
                   }
                 : row.endereco_entrega,
               id_vendedor_externo: tinyVendedorId || row.id_vendedor_externo,
+              id_client_externo: idClientExterno,
+              client_vendor_externo: clientVendorExterno,
             } as any,
           })
 
@@ -155,6 +172,7 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
       total: Number(row.total),
       forma_recebimento: row.forma_recebimento,
       condicao_pagamento: row.condicao_pagamento,
+      juros_ligado: Boolean((row as any).juros_ligado ?? true),
       endereco_entrega: row.endereco_entrega,
       selected_vendedor:
         selectedVendedor ||

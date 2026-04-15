@@ -170,7 +170,12 @@ export default function ComissoesPage() {
   // When role changes, clear vendor if it doesn't match the filtered options
   const vendorOptions = useMemo(() => {
     if (!role) return vendorsAll
-    return vendorsAll.filter((v) => v.tipo === role)
+    return vendorsAll.filter((v) => {
+      if (v.tipo === role) return true
+      /** Sem linha em `vendedor_tipo_acesso`: comissões assumem papel Vendedor (igual ao backend). */
+      if (v.tipo == null && role === 'VENDEDOR') return true
+      return false
+    })
   }, [vendorsAll, role])
 
   useEffect(() => {

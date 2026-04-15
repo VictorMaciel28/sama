@@ -14,11 +14,22 @@ export async function POST(req: Request) {
   try {
     const body = await req.json()
 
-    // Support bulk operations: { create: [{name,percent,valor_minimo?}], update: [{id,...}], delete: [id...] }
-    const toCreate: Array<{ name: string; percent: number; valor_minimo?: number | null }> = Array.isArray(body?.create)
+    // Support bulk operations: { create: [{name,percent,valor_minimo?,valor_minimo_sem_taxa?}], update: [{id,...}], delete: [id...] }
+    const toCreate: Array<{
+      name: string
+      percent: number
+      valor_minimo?: number | null
+      valor_minimo_sem_taxa?: number | null
+    }> = Array.isArray(body?.create)
       ? body.create
       : []
-    const toUpdate: Array<{ id: number; name?: string; percent?: number; valor_minimo?: number | null }> = Array.isArray(
+    const toUpdate: Array<{
+      id: number
+      name?: string
+      percent?: number
+      valor_minimo?: number | null
+      valor_minimo_sem_taxa?: number | null
+    }> = Array.isArray(
       body?.update
     )
       ? body.update
@@ -30,7 +41,13 @@ export async function POST(req: Request) {
       if (!c?.name || Number.isNaN(Number(c.percent))) return NextResponse.json({ ok: false, error: 'Payload inválido (create)' }, { status: 400 })
     }
     for (const u of toUpdate) {
-      if (!u?.id || (u.name == null && u.percent == null && u.valor_minimo === undefined)) {
+      if (
+        !u?.id ||
+        (u.name == null &&
+          u.percent == null &&
+          u.valor_minimo === undefined &&
+          u.valor_minimo_sem_taxa === undefined)
+      ) {
         return NextResponse.json({ ok: false, error: 'Payload inválido (update)' }, { status: 400 })
       }
     }
@@ -55,6 +72,12 @@ export async function POST(req: Request) {
                     : u.valor_minimo === null || Number.isNaN(Number(u.valor_minimo))
                       ? null
                       : Number(u.valor_minimo),
+                valor_minimo_sem_taxa:
+                  u.valor_minimo_sem_taxa === undefined
+                    ? undefined
+                    : u.valor_minimo_sem_taxa === null || Number.isNaN(Number(u.valor_minimo_sem_taxa))
+                      ? null
+                      : Number(u.valor_minimo_sem_taxa),
               },
             }).catch(() => null)
           )
@@ -70,6 +93,12 @@ export async function POST(req: Request) {
                   c.valor_minimo == null || c.valor_minimo === '' || Number.isNaN(Number(c.valor_minimo))
                     ? null
                     : Number(c.valor_minimo),
+                valor_minimo_sem_taxa:
+                  c.valor_minimo_sem_taxa == null ||
+                  c.valor_minimo_sem_taxa === '' ||
+                  Number.isNaN(Number(c.valor_minimo_sem_taxa))
+                    ? null
+                    : Number(c.valor_minimo_sem_taxa),
               },
             })
           )

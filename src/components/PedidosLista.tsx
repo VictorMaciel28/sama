@@ -25,6 +25,15 @@ type ShareTarget = {
   email: string | null
 }
 
+type SyncModalState =
+  | null
+  | { mode: 'confirm' }
+  | { mode: 'syncing' }
+  | { mode: 'result'; data: Record<string, unknown> }
+  | { mode: 'import_confirm'; data: Record<string, unknown>; unmatched: string[] }
+  | { mode: 'importing' }
+  | { mode: 'import_done'; data: Record<string, unknown> }
+
  export default function PedidosLista({
    entity = 'pedido',
    title,
@@ -42,7 +51,7 @@ type ShareTarget = {
   const [shareSending, setShareSending] = useState(false)
   const [shareModalError, setShareModalError] = useState<string | null>(null)
   const [shareNotice, setShareNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
-  const [isSyncingPedidos, setIsSyncingPedidos] = useState(false)
+  const [syncModal, setSyncModal] = useState<SyncModalState>(null)
 
   const loadItems = async () => {
     const rows = await fetchFn()
@@ -405,28 +414,67 @@ type ShareTarget = {
     }
   }
 
-  const syncPedidos = async () => {
+  const syncBusy = syncModal?.mode === 'syncing' || syncModal?.mode === 'importing'
+
+  const openSyncModal = () => {
     if (entity !== 'pedido') return
-    if (!confirm('Esta ação excluirá e reimportará todos os pedidos locais. Deseja continuar?')) return
-    setIsSyncingPedidos(true)
+    setSyncModal({ mode: 'confirm' })
+  }
+
+  const closeSyncModal = () => {
+    setSyncModal(null)
+  }
+
+  const runSyncPedidos = async () => {
+    if (entity !== 'pedido') return
+    setSyncModal({ mode: 'syncing' })
     try {
-      const res = await fetch('/api/pedidos/sync', { method: 'POST' })
+      const res = await fetch('/api/pedidos/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: '{}',
+      })
       const json = await res.json().catch(() => null)
       if (!res.ok || !json?.ok) {
-        console.error('Erro ao sincronizar pedidos', {
-          status: res.status,
-          statusText: res.statusText,
-          response: json,
-        })
-        throw new Error(json?.error || 'Falha ao sincronizar pedidos')
+        console.error('Erro ao sincronizar pedidos', { status: res.status, response: json })
+        setSyncModal({ mode: 'result', data: { ok: false, error: json?.error || 'Falha ao sincronizar pedidos' } })
+        return
       }
       await loadItems()
-      alert(`Sincronização concluída. ${json?.imported ?? 0} pedidos importados.`)
+      const unmatched = Array.isArray(json?.unmatchedClienteNomes) ? (json.unmatchedClienteNomes as string[]) : []
+      if (unmatched.length > 0) {
+        setSyncModal({ mode: 'import_confirm', data: json as Record<string, unknown>, unmatched })
+      } else {
+        setSyncModal({ mode: 'result', data: json as Record<string, unknown> })
+      }
     } catch (err: any) {
       console.error('Falha na sincronização de pedidos', err)
-      alert('Erro ao sincronizar pedidos: ' + (err?.message || err))
-    } finally {
-      setIsSyncingPedidos(false)
+      setSyncModal({ mode: 'result', data: { ok: false, error: err?.message || String(err) } })
+    }
+  }
+
+  const runImportUnmatchedClients = async () => {
+    if (syncModal?.mode !== 'import_confirm') return
+    const nomes = syncModal.unmatched
+    setSyncModal({ mode: 'importing' })
+    try {
+      const res = await fetch('/api/pedidos/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'importClients', nomes }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.ok) {
+        setSyncModal({
+          mode: 'import_done',
+          data: { ok: false, error: json?.error || 'Falha ao importar clientes' },
+        })
+        return
+      }
+      setSyncModal({ mode: 'import_done', data: json as Record<string, unknown> })
+      await loadItems()
+    } catch (err: any) {
+      setSyncModal({ mode: 'import_done', data: { ok: false, error: err?.message || String(err) } })
     }
   }
 
@@ -489,11 +537,11 @@ type ShareTarget = {
           <div className="d-flex align-items-center gap-2">
             {entity === 'pedido' && (
               <>
-                <Button size="sm" variant="outline-primary" onClick={syncPedidos} disabled={isSyncingPedidos}>
-                  {isSyncingPedidos ? (
+                <Button size="sm" variant="outline-primary" onClick={openSyncModal} disabled={syncBusy}>
+                  {syncBusy ? (
                     <>
                       <Spinner animation="border" size="sm" className="me-2" />
-                      Sincronizando
+                      Aguarde…
                     </>
                   ) : (
                     'Sincronizar Pedidos'
@@ -831,6 +879,216 @@ type ShareTarget = {
               'Enviar por email'
             )}
           </Button>
+        </Modal.Footer>
+      </Modal>
+
+      <Modal
+        show={syncModal != null}
+        onHide={() => {
+          if (syncModal?.mode === 'syncing' || syncModal?.mode === 'importing') return
+          closeSyncModal()
+        }}
+        centered
+        backdrop={syncModal?.mode === 'syncing' || syncModal?.mode === 'importing' ? 'static' : true}
+      >
+        <Modal.Header closeButton={syncModal?.mode !== 'syncing' && syncModal?.mode !== 'importing'}>
+          <Modal.Title>
+            {syncModal?.mode === 'confirm' && 'Sincronizar pedidos'}
+            {syncModal?.mode === 'syncing' && 'Sincronizando…'}
+            {syncModal?.mode === 'result' && 'Resultado da sincronização'}
+            {syncModal?.mode === 'import_confirm' && 'Clientes não encontrados'}
+            {syncModal?.mode === 'importing' && 'Importando clientes…'}
+            {syncModal?.mode === 'import_done' && 'Resultado da importação'}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {syncModal?.mode === 'confirm' && (
+            <p className="mb-0">
+              Esta ação <strong>exclui e reimporta</strong> todos os pedidos locais a partir do Tiny. Pedidos são
+              vinculados a clientes da base por CNPJ, ID do Tiny e <strong>nome da empresa</strong> quando houver
+              correspondência.
+            </p>
+          )}
+          {syncModal?.mode === 'syncing' && (
+            <div className="d-flex align-items-center gap-3 py-2">
+              <Spinner animation="border" />
+              <span>Buscando pedidos no Tiny e gravando na plataforma…</span>
+            </div>
+          )}
+          {syncModal?.mode === 'result' && (
+            <div>
+              {syncModal.data.ok === false ? (
+                <div className="text-danger">{String(syncModal.data.error || 'Erro desconhecido')}</div>
+              ) : (
+                <>
+                  <p className="mb-2">
+                    Foram recebidos <strong>{Number(syncModal.data.totalRecebido ?? 0)}</strong> pedidos do Tiny e
+                    gravados <strong>{Number(syncModal.data.imported ?? 0)}</strong> na base local.
+                  </p>
+                  <p className="mb-0 text-muted small">
+                    Com cliente local (carteira): <strong>{Number(syncModal.data.comClienteLocal ?? 0)}</strong>
+                    {syncModal.data.pedidosEnriquecidosObter != null ? (
+                      <> · Consultas detalhadas (obter pedido): {Number(syncModal.data.pedidosEnriquecidosObter)}</>
+                    ) : null}
+                  </p>
+                </>
+              )}
+            </div>
+          )}
+          {syncModal?.mode === 'import_confirm' && (
+            <div>
+              <p className="mb-2">
+                A sincronização terminou, mas estes <strong>clientes</strong> dos pedidos não bateram com ninguém na
+                base local. Deseja <strong>buscar no Tiny</strong> (contatos), importar/atualizar o cadastro e{' '}
+                <strong>vincular de novo</strong> os pedidos que ficaram sem cliente?
+              </p>
+              <div
+                className="border rounded p-2 mb-3 bg-light"
+                style={{ maxHeight: 220, overflowY: 'auto', fontSize: '0.9rem' }}
+              >
+                <ul className="mb-0 ps-3">
+                  {syncModal.unmatched.map((n) => (
+                    <li key={n}>{n}</li>
+                  ))}
+                </ul>
+              </div>
+              <p className="small text-muted mb-2">
+                Resumo da última etapa: {Number(syncModal.data.imported ?? 0)} pedidos gravados;{' '}
+                {Number(syncModal.data.comClienteLocal ?? 0)} já com vínculo local.
+              </p>
+              {Array.isArray(syncModal.data.pedidosSemClienteVinculo) &&
+                (syncModal.data.pedidosSemClienteVinculo as { numero: number; tiny_id: number | null; cliente: string }[])
+                  .length > 0 && (
+                  <div>
+                    <p className="small fw-semibold mb-1">
+                      Pedidos sem cliente vinculado — <code className="small">tiny_id</code> é o parâmetro{' '}
+                      <code className="small">id</code> do <code className="small">pedido.obter</code>:
+                    </p>
+                    <div
+                      className="border rounded p-2 bg-white"
+                      style={{ maxHeight: 200, overflowY: 'auto', fontSize: '0.85rem' }}
+                    >
+                      <ul className="mb-0 ps-3">
+                        {(syncModal.data.pedidosSemClienteVinculo as { numero: number; tiny_id: number | null; cliente: string }[]).map(
+                          (p) => (
+                            <li key={p.numero}>
+                              <code>{p.tiny_id != null && Number(p.tiny_id) > 0 ? p.tiny_id : '—'}</code>
+                              {' · nº '}
+                              <strong>{p.numero}</strong>
+                              {' · '}
+                              {String(p.cliente || '')}
+                            </li>
+                          )
+                        )}
+                      </ul>
+                    </div>
+                  </div>
+                )}
+            </div>
+          )}
+          {syncModal?.mode === 'importing' && (
+            <div className="d-flex align-items-center gap-3 py-2">
+              <Spinner animation="border" />
+              <span>Consultando Tiny, gravando contatos e atualizando pedidos…</span>
+            </div>
+          )}
+          {syncModal?.mode === 'import_done' && (
+            <div>
+              {syncModal.data.ok === false ? (
+                <div className="text-danger">{String(syncModal.data.error || 'Erro')}</div>
+              ) : (
+                <>
+                  <p className="mb-2">
+                    Contatos importados ou atualizados: <strong>{Number(syncModal.data.importedOrUpdated ?? 0)}</strong>
+                    . Pedidos reassociados por nome: <strong>{Number(syncModal.data.relinkedPedidos ?? 0)}</strong>
+                    {'. '}
+                    Pelo <code className="small">contatos.pesquisa</code> (nome/CNPJ):{' '}
+                    <strong>
+                      {Number(
+                        syncModal.data.relinkedViaContatosPesquisa ?? syncModal.data.relinkedViaPedidoObter ?? 0
+                      )}
+                    </strong>{' '}
+                    pedido(s) reassociado(s).
+                  </p>
+                  {Array.isArray(syncModal.data.failedNomes) && (syncModal.data.failedNomes as string[]).length > 0 && (
+                    <p className="small text-warning mb-2">
+                      Sem resultado na busca Tiny: {(syncModal.data.failedNomes as string[]).join('; ')}
+                    </p>
+                  )}
+                  {Array.isArray(syncModal.data.stillUnmatched) && (syncModal.data.stillUnmatched as string[]).length > 0 && (
+                    <p className="small text-muted mb-2">
+                      Ainda sem vínculo (nomes distintos na base): {(syncModal.data.stillUnmatched as string[]).slice(0, 12).join('; ')}
+                      {(syncModal.data.stillUnmatched as string[]).length > 12 ? '…' : ''}
+                    </p>
+                  )}
+                  {Array.isArray(syncModal.data.pedidosSemClienteVinculo) &&
+                    (syncModal.data.pedidosSemClienteVinculo as { numero: number; tiny_id: number | null; cliente: string }[])
+                      .length > 0 && (
+                      <div>
+                        <p className="small fw-semibold mb-1">
+                          Pedidos ainda sem cliente — <code className="small">tiny_id</code> = parâmetro{' '}
+                          <code className="small">id</code> do <code className="small">pedido.obter</code>:
+                        </p>
+                        <div
+                          className="border rounded p-2 bg-light"
+                          style={{ maxHeight: 220, overflowY: 'auto', fontSize: '0.85rem' }}
+                        >
+                          <ul className="mb-0 ps-3">
+                            {(
+                              syncModal.data.pedidosSemClienteVinculo as {
+                                numero: number
+                                tiny_id: number | null
+                                cliente: string
+                              }[]
+                            ).map((p) => (
+                              <li key={p.numero}>
+                                <code>{p.tiny_id != null && Number(p.tiny_id) > 0 ? p.tiny_id : '—'}</code>
+                                {' · nº '}
+                                <strong>{p.numero}</strong>
+                                {' · '}
+                                {String(p.cliente || '')}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    )}
+                </>
+              )}
+            </div>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          {syncModal?.mode === 'confirm' && (
+            <>
+              <Button variant="secondary" onClick={closeSyncModal}>
+                Cancelar
+              </Button>
+              <Button variant="primary" onClick={runSyncPedidos}>
+                Continuar
+              </Button>
+            </>
+          )}
+          {syncModal?.mode === 'result' && (
+            <Button variant="primary" onClick={closeSyncModal}>
+              OK
+            </Button>
+          )}
+          {syncModal?.mode === 'import_confirm' && (
+            <>
+              <Button variant="secondary" onClick={closeSyncModal}>
+                Não importar
+              </Button>
+              <Button variant="primary" onClick={runImportUnmatchedClients}>
+                Importar do Tiny e vincular
+              </Button>
+            </>
+          )}
+          {syncModal?.mode === 'import_done' && (
+            <Button variant="primary" onClick={closeSyncModal}>
+              OK
+            </Button>
+          )}
         </Modal.Footer>
       </Modal>
 

@@ -19,7 +19,8 @@ export async function GET(req: Request) {
         isAdmin = nivel?.nivel === 'ADMINISTRADOR'
       }
     }
-    if (!vendedorExterno) {
+    /** Administrador vê todas as comissões; não exige linha em `vendedor_tipo_acesso`. */
+    if (!vendedorExterno && !isAdmin) {
       return NextResponse.json({ ok: true, data: [] })
     }
 
