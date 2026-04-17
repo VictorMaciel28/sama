@@ -665,7 +665,7 @@ model tiny_receive_form {
   @@index([nome], map: "idx_tiny_receive_form_nome")
 }
 
-/** Solicitação pública de revisão de NF (fluxo /revisar-pedido). */
+/** Solicitação pública de revisão de NF (fluxo /pos-venda). */
 model revisar_pedido_solicitacao {
   id                  Int      @id @default(autoincrement())
   tiny_nota_fiscal_id String   @db.VarChar(32)

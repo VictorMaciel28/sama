@@ -13,7 +13,6 @@ type ListaRow = {
   valor_nota: string | null
   telefone: string
   telefone_e_whatsapp?: boolean
-  qtd_anexos: number
 }
 
 type ItemSnapshot = {
@@ -151,7 +150,7 @@ export default function DevolucoesSolicitadasPage() {
         <Col>
           <h4 className="mb-1">Devoluções solicitadas</h4>
           <p className="text-muted mb-0">
-            Solicitações feitas pelo fluxo público de revisão de nota fiscal. Clique em uma linha para ver
+            Solicitações feitas pelo fluxo público em /pos-venda. Clique em uma linha para ver
             materiais, fotos e observações.
           </p>
         </Col>
@@ -179,7 +178,6 @@ export default function DevolucoesSolicitadasPage() {
                     <th>Telefone</th>
                     <th>WhatsApp?</th>
                     <th>ID NF (Tiny)</th>
-                    <th>Fotos</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -203,7 +201,6 @@ export default function DevolucoesSolicitadasPage() {
                       <td>{r.telefone}</td>
                       <td>{r.telefone_e_whatsapp ? 'Sim' : 'Não'}</td>
                       <td className="small text-muted">{r.tiny_nota_fiscal_id}</td>
-                      <td>{r.qtd_anexos}</td>
                     </tr>
                   ))}
                 </tbody>

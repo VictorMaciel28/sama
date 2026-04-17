@@ -1,7 +1,6 @@
 const path = require('path');
 
 module.exports = {
-  
   typescript: {
     // ✅ Faz o Next buildar mesmo com erros de tipagem (TS2339, TS7006, etc.)
     ignoreBuildErrors: true,

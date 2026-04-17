@@ -49,7 +49,7 @@ function parseMoneyBR(s: string) {
 
 type ImagemSlot = { file: File; preview: string } | null
 
-export default function RevisarPedidoPage() {
+export default function PosVendaPage() {
   const [numeroNota, setNumeroNota] = useState('')
   const [cnpj, setCnpj] = useState('')
   const [loading, setLoading] = useState(false)
@@ -526,11 +526,11 @@ export default function RevisarPedidoPage() {
 
                   <form onSubmit={handleSolicitar} className="border-top pt-4">
                     <div className="mb-3">
-                      <label className="form-label" htmlFor="revisar-observacoes">
+                      <label className="form-label" htmlFor="pos-venda-observacoes">
                         Observações
                       </label>
                       <textarea
-                        id="revisar-observacoes"
+                        id="pos-venda-observacoes"
                         className="form-control"
                         rows={4}
                         value={observacoes}
@@ -558,11 +558,11 @@ export default function RevisarPedidoPage() {
                           <input
                             className="form-check-input"
                             type="checkbox"
-                            id="revisar-telefone-whatsapp"
+                            id="pos-venda-telefone-whatsapp"
                             checked={telefoneEhWhatsapp}
                             onChange={(e) => setTelefoneEhWhatsapp(e.target.checked)}
                           />
-                          <label className="form-check-label" htmlFor="revisar-telefone-whatsapp">
+                          <label className="form-check-label" htmlFor="pos-venda-telefone-whatsapp">
                             Sim
                           </label>
                         </div>
