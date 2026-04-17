@@ -68,6 +68,13 @@ export const MENU_ITEMS: MenuItemType[] = [
         url: '/condicoes-pagamento',
         parentKey: 'administracao',
       },
+      {
+        key: 'devolucoes-solicitadas',
+        label: 'Devoluções solicitadas',
+        icon: 'ri:exchange-funds-line',
+        url: '/devolucoes-solicitadas',
+        parentKey: 'administracao',
+      },
     ],
   },
   // {

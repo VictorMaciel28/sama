@@ -664,3 +664,42 @@ model tiny_receive_form {
   @@index([situacao], map: "idx_tiny_receive_form_situacao")
   @@index([nome], map: "idx_tiny_receive_form_nome")
 }
+
+/** Solicitação pública de revisão de NF (fluxo /revisar-pedido). */
+model revisar_pedido_solicitacao {
+  id                  Int      @id @default(autoincrement())
+  tiny_nota_fiscal_id String   @db.VarChar(32)
+  nota_numero         String?  @db.VarChar(32)
+  nota_serie          String?  @db.VarChar(16)
+  cliente_nome        String?  @db.VarChar(200)
+  valor_nota          String?  @db.VarChar(32)
+  telefone            String   @db.VarChar(30)
+  /** Se o cliente indicou que o número é WhatsApp. */
+  telefone_e_whatsapp Boolean  @default(false) @db.TinyInt
+  itens_indices       Json
+  /** Linhas da NF marcadas pelo cliente (descrição, qtd, etc.) para exibição no admin. */
+  itens_snapshot      Json?
+  observacoes         String?  @db.Text
+  created_at          DateTime @default(now()) @db.DateTime(0)
+
+  anexos revisar_pedido_solicitacao_anexo[]
+
+  @@index([tiny_nota_fiscal_id], map: "idx_revisar_pedido_sol_nota")
+  @@index([created_at], map: "idx_revisar_pedido_sol_created")
+}
+
+model revisar_pedido_solicitacao_anexo {
+  id             Int      @id @default(autoincrement())
+  solicitacao_id Int
+  ordem          Int
+  file_name      String   @db.VarChar(255)
+  blob_path      String   @db.VarChar(1024)
+  blob_url       String?  @db.VarChar(2048)
+  content_type   String?  @db.VarChar(80)
+  created_at     DateTime @default(now()) @db.DateTime(0)
+
+  solicitacao revisar_pedido_solicitacao @relation(fields: [solicitacao_id], references: [id], onDelete: Cascade)
+
+  @@unique([solicitacao_id, ordem], map: "uk_revisar_pedido_anexo_ordem")
+  @@index([solicitacao_id], map: "idx_revisar_pedido_anexo_sol")
+}
