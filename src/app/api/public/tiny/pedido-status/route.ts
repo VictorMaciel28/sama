@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { tinyV2Post } from '@/lib/tinyOAuth'
-import { upsertClienteFromTinyObterPayload } from '@/lib/tinyObterCliente'
+import { ensureClienteLinkForTinyPedidoObter } from '@/lib/tinyPedidoClienteContatos'
+import { resolveTinyPedidoIdVendedorExterno } from '@/lib/tinyPedidoVendedor'
 import { recomputeCommissionsForOrder } from '@/services/commission'
 import { persistTinyNotaFiscalOnPayment } from '@/lib/tinyNotaFiscalPayment'
 
@@ -169,21 +170,15 @@ async function handle(req: NextRequest) {
         const dataIso = dataBr ? dataBr.split('/').reverse().join('-') : ''
         const clienteNome = String(tinyPedido?.cliente?.nome || '').trim()
         const clienteCpfCnpj = String(tinyPedido?.cliente?.cpf_cnpj || '').trim()
-        const vendedorExterno = tinyPedido?.id_vendedor != null ? String(tinyPedido.id_vendedor).trim() : null
-        let idClientExterno: bigint | null = null
-        let clientVendorExterno: string | null = null
-        const tinyCli = tinyPedido?.cliente
-        if (tinyCli) {
-          const extId = await upsertClienteFromTinyObterPayload(prisma, tinyCli)
-          if (extId) {
-            const cli = await prisma.cliente.findUnique({
-              where: { external_id: extId },
-              select: { id_vendedor_externo: true },
-            })
-            idClientExterno = extId
-            clientVendorExterno = cli?.id_vendedor_externo ?? null
-          }
-        }
+        const vendedorExterno = await resolveTinyPedidoIdVendedorExterno({
+          tinyPedido: tinyPedido as Record<string, unknown>,
+          webhookDados: payload?.dados as Record<string, unknown> | undefined,
+          tinyOrderId,
+          numero,
+        })
+        const clienteLink = await ensureClienteLinkForTinyPedidoObter(prisma, tinyPedido)
+        const idClientExterno = clienteLink?.external_id ?? null
+        const clientVendorExterno = clienteLink?.id_vendedor_externo ?? null
         const formaRecebimento = tinyPedido?.forma_pagamento ? String(tinyPedido.forma_pagamento) : null
         const condicaoPagamento = normalizeCondicaoPagamento(tinyPedido?.condicao_pagamento)
         const enderecoEntrega = buildEnderecoEntrega(tinyPedido)
@@ -267,20 +262,24 @@ async function handle(req: NextRequest) {
     const enderecoEntrega = buildEnderecoEntrega(tinyPedidoFromV2)
     const patch: Record<string, unknown> = {}
     if (enderecoEntrega) patch.endereco_entrega = enderecoEntrega
+    const numeroPedido = Number(tinyPedidoFromV2?.numero || row.numero || 0)
+    const vendedorPatch = await resolveTinyPedidoIdVendedorExterno({
+      tinyPedido: tinyPedidoFromV2 as Record<string, unknown>,
+      webhookDados: payload?.dados as Record<string, unknown> | undefined,
+      tinyOrderId,
+      numero: Number.isFinite(numeroPedido) && numeroPedido > 0 ? numeroPedido : row.numero,
+    })
+    if (vendedorPatch) patch.id_vendedor_externo = vendedorPatch
+    const clienteFromObter = await ensureClienteLinkForTinyPedidoObter(prisma, tinyPedidoFromV2)
+    if (clienteFromObter) {
+      patch.id_client_externo = clienteFromObter.external_id
+      patch.client_vendor_externo = clienteFromObter.id_vendedor_externo
+    }
     if (tinyPedidoFromV2.cliente) {
-      const extId = await upsertClienteFromTinyObterPayload(prisma, tinyPedidoFromV2.cliente)
-      if (extId) {
-        const cli = await prisma.cliente.findUnique({
-          where: { external_id: extId },
-          select: { id_vendedor_externo: true },
-        })
-        patch.id_client_externo = extId
-        patch.client_vendor_externo = cli?.id_vendedor_externo ?? null
-        const nome = String(tinyPedidoFromV2.cliente.nome || '').trim()
-        if (nome) patch.cliente = nome
-        const doc = String(tinyPedidoFromV2.cliente.cpf_cnpj || '').trim()
-        if (doc) patch.cnpj = doc
-      }
+      const nome = String(tinyPedidoFromV2.cliente.nome || '').trim()
+      if (nome) patch.cliente = nome
+      const doc = String(tinyPedidoFromV2.cliente.cpf_cnpj || '').trim()
+      if (doc) patch.cnpj = doc
     }
     if (Object.keys(patch).length > 0) {
       await prisma.platform_order.update({
