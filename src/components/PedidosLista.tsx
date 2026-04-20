@@ -7,6 +7,7 @@ import { Pedido, PedidoStatus } from '@/services/pedidos2'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
 import { savePedido as savePedidoRemote } from '@/services/pedidos2'
  import { useRouter } from 'next/navigation'
+ import { useNotificationContext } from '@/context/useNotificationContext'
  
  interface PedidosListaProps {
    entity?: 'pedido' | 'proposta'
@@ -43,6 +44,7 @@ type SyncModalState =
    itemRouteBase = '/pedidos',
  }: PedidosListaProps) {
    const router = useRouter()
+   const { showNotification } = useNotificationContext()
    const [items, setItems] = useState<Pedido[]>([])
   const [shareModalVisible, setShareModalVisible] = useState(false)
   const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null)
@@ -50,8 +52,9 @@ type SyncModalState =
   const [shareLoadingPedidoNumero, setShareLoadingPedidoNumero] = useState<number | null>(null)
   const [shareSending, setShareSending] = useState(false)
   const [shareModalError, setShareModalError] = useState<string | null>(null)
-  const [shareNotice, setShareNotice] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
   const [syncModal, setSyncModal] = useState<SyncModalState>(null)
+  const [deleteModal, setDeleteModal] = useState<{ mode: 'pedido' | 'proposta'; numero: number } | null>(null)
+  const [deleteBusy, setDeleteBusy] = useState(false)
 
   const loadItems = async () => {
     const rows = await fetchFn()
@@ -301,7 +304,6 @@ type SyncModalState =
   const openShareModal = async (e: React.MouseEvent, pedidoNumero: number) => {
     e.stopPropagation()
     setShareModalError(null)
-    setShareNotice(null)
     setShareLoadingPedidoNumero(pedidoNumero)
     try {
       const res = await fetch(`/api/pedidos/${pedidoNumero}`)
@@ -321,9 +323,10 @@ type SyncModalState =
       setShareEmailInput(defaultEmail || '')
       setShareModalVisible(true)
     } catch (err: any) {
-      setShareNotice({
-        type: 'error',
+      showNotification({
         message: err?.message || 'Não foi possível abrir o compartilhamento',
+        variant: 'danger',
+        delay: 6000,
       })
     } finally {
       setShareLoadingPedidoNumero(null)
@@ -351,9 +354,10 @@ type SyncModalState =
         throw new Error(json?.error || 'Falha ao enviar o email')
       }
       closeShareModal()
-      setShareNotice({
-        type: 'success',
+      showNotification({
         message: `Pedido #${targetNumero} enviado para ${recipient}`,
+        variant: 'success',
+        delay: 4500,
       })
     } catch (err: any) {
       setShareModalError(err?.message || 'Falha ao enviar o email')
@@ -362,20 +366,68 @@ type SyncModalState =
     }
   }
 
-  const handleDelete = async (e: React.MouseEvent, numero: number) => {
+  const openDeleteModal = (e: React.MouseEvent, numero: number) => {
     e.stopPropagation()
-    if (!confirm('Confirma exclusão?')) return
+    setDeleteModal({ mode: entity === 'proposta' ? 'proposta' : 'pedido', numero })
+  }
+
+  const closeDeleteModal = () => {
+    if (deleteBusy) return
+    setDeleteModal(null)
+  }
+
+  const confirmDelete = async () => {
+    if (!deleteModal) return
+    setDeleteBusy(true)
+    const { mode, numero } = deleteModal
     try {
-      if (entity === 'proposta') {
+      if (mode === 'proposta') {
         const res = await fetch(`/api/propostas?id=${numero}`, { method: 'DELETE' })
         const json = await res.json()
         if (!res.ok || !json?.ok) throw new Error(json?.error || 'Falha ao deletar proposta')
         setItems((arr) => arr.filter((it) => it.numero !== numero))
+        showNotification({
+          message: `Proposta #${numero} removida.`,
+          variant: 'success',
+          delay: 4500,
+        })
       } else {
-        // mock delete for pedidos (preserve existing behaviour)
+        const res = await fetch(`/api/pedidos/${numero}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'cancel' }),
+        })
+        const json = await res.json().catch(() => null)
+        if (!res.ok || !json?.ok) throw new Error(json?.error || 'Falha ao cancelar pedido')
+        setItems((arr) =>
+          arr.map((it) =>
+            it.numero === numero ? { ...it, status: 'Cancelado' as PedidoStatus } : it
+          )
+        )
+        const tinyErr = json?.tinyError ? String(json.tinyError) : ''
+        if (tinyErr) {
+          showNotification({
+            message: `Pedido #${numero} cancelado no SAMA. Aviso do Tiny: ${tinyErr}`,
+            variant: 'warning',
+            delay: 9000,
+          })
+        } else {
+          showNotification({
+            message: `Pedido #${numero} cancelado.`,
+            variant: 'success',
+            delay: 4500,
+          })
+        }
       }
+      setDeleteModal(null)
     } catch (err: any) {
-      alert('Erro ao excluir: ' + (err?.message || err))
+      showNotification({
+        message: err?.message || 'Erro ao excluir',
+        variant: 'danger',
+        delay: 6000,
+      })
+    } finally {
+      setDeleteBusy(false)
     }
   }
 
@@ -555,11 +607,6 @@ type SyncModalState =
           </div>
         }
       />
-      {shareNotice && (
-        <div className={`alert alert-${shareNotice.type === 'success' ? 'success' : 'danger'} mt-3`}>
-          {shareNotice.message}
-        </div>
-      )}
 
       <section className="filtros pt-1 pb-2">
          <Card className="border-0 shadow-sm">
@@ -795,8 +842,8 @@ type SyncModalState =
                                     <Button
                                       variant="outline-danger"
                                       size="sm"
-                                      onClick={(e) => handleDelete(e, p.numero)}
-                                      title="Excluir"
+                                      onClick={(e) => openDeleteModal(e, p.numero)}
+                                      title="Cancelar pedido"
                                     >
                                        <IconifyIcon icon="ri:delete-bin-line" />
                                      </Button>
@@ -1089,6 +1136,43 @@ type SyncModalState =
               OK
             </Button>
           )}
+        </Modal.Footer>
+      </Modal>
+
+      <Modal show={deleteModal != null} onHide={closeDeleteModal} centered backdrop={deleteBusy ? 'static' : true}>
+        <Modal.Header closeButton={!deleteBusy}>
+          <Modal.Title>
+            {deleteModal?.mode === 'proposta' ? 'Excluir proposta' : 'Cancelar pedido'}
+          </Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          {!deleteModal ? null : deleteModal.mode === 'proposta' ? (
+            <p className="mb-0">
+              Confirma a exclusão da proposta <strong>#{deleteModal.numero}</strong>? Esta ação não pode ser desfeita.
+            </p>
+          ) : (
+            <p className="mb-0">
+              O pedido <strong>#{deleteModal.numero}</strong> será marcado como <strong>Cancelado</strong> no Tiny
+              (Olist) e no SAMA. Deseja continuar?
+            </p>
+          )}
+        </Modal.Body>
+        <Modal.Footer>
+          <Button variant="secondary" onClick={closeDeleteModal} disabled={deleteBusy}>
+            Voltar
+          </Button>
+          <Button variant="danger" onClick={confirmDelete} disabled={deleteBusy}>
+            {deleteBusy ? (
+              <>
+                <Spinner animation="border" size="sm" className="me-2" />
+                Processando…
+              </>
+            ) : deleteModal?.mode === 'proposta' ? (
+              'Excluir'
+            ) : (
+              'Confirmar cancelamento'
+            )}
+          </Button>
         </Modal.Footer>
       </Modal>
 

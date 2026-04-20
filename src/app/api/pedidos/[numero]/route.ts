@@ -251,4 +251,83 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
   }
 }
 
+/** Cancelamento: marca pedido como cancelado no Tiny (`pedido.alterar.situacao`) e depois no SAMA. */
+export async function PATCH(req: Request, { params }: { params: { numero: string } }) {
+  try {
+    const session = (await getServerSession(options as any)) as any
+    if (!session?.user?.id) return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 })
+
+    const body = await req.json().catch(() => ({}))
+    if (String(body?.action || '') !== 'cancel') {
+      return NextResponse.json({ ok: false, error: 'Ação inválida' }, { status: 400 })
+    }
+
+    const userEmail = session.user.email || null
+    let isAdmin = false
+    if (userEmail) {
+      const vendRecord = await prisma.vendedor.findFirst({ where: { email: userEmail } })
+      if (vendRecord?.id_vendedor_externo) {
+        const nivel = await prisma.vendedor_nivel_acesso
+          .findUnique({ where: { id_vendedor_externo: vendRecord.id_vendedor_externo } })
+          .catch(() => null)
+        if (nivel?.nivel === 'ADMINISTRADOR') isAdmin = true
+      }
+    }
+    if (!isAdmin) {
+      return NextResponse.json({ ok: false, error: 'Sem permissão para cancelar pedidos' }, { status: 403 })
+    }
+
+    const numero = Number(params?.numero || 0)
+    if (!numero) return NextResponse.json({ ok: false, error: 'Número inválido' }, { status: 400 })
+
+    const row = await prisma.platform_order.findUnique({ where: { numero } })
+    if (!row) return NextResponse.json({ ok: false, error: 'Pedido não encontrado' }, { status: 404 })
+
+    if (row.status === 'CANCELADO') {
+      return NextResponse.json({ ok: true, alreadyCancelled: true, tinyError: null })
+    }
+
+    let tinyError: string | null = null
+    const tinyId = row.tiny_id != null && Number(row.tiny_id) > 0 ? Number(row.tiny_id) : null
+
+    if (tinyId) {
+      try {
+        const dataTiny = await tinyV2Post('pedido.alterar.situacao', {
+          id: tinyId,
+          situacao: 'cancelado',
+        })
+        const retorno = dataTiny?.retorno
+        if (String(retorno?.status || '').toUpperCase() !== 'OK') {
+          const msg =
+            Array.isArray(retorno?.erros) && retorno.erros.length > 0
+              ? String(retorno.erros[0]?.erro || '')
+              : 'Falha ao cancelar pedido no Tiny'
+          tinyError = msg || 'Falha ao cancelar pedido no Tiny'
+        }
+      } catch (e: any) {
+        tinyError = e?.message ? String(e.message) : 'Erro ao comunicar com o Tiny'
+      }
+    }
+
+    await prisma.platform_order.update({
+      where: { numero },
+      data: { status: 'CANCELADO' },
+    })
+
+    if (tinyId) {
+      try {
+        await prisma.$executeRaw`
+          INSERT INTO platform_order_status_history (tiny_id, status, changed_at)
+          VALUES (${tinyId}, ${'CANCELADO'}, NOW())
+        `
+      } catch {
+        // ignore history failures
+      }
+    }
+
+    return NextResponse.json({ ok: true, tinyError })
+  } catch (error: any) {
+    return NextResponse.json({ ok: false, error: error?.message ?? 'Erro ao cancelar pedido' }, { status: 500 })
+  }
+}
 

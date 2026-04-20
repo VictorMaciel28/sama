@@ -1257,37 +1257,29 @@ export default function PedidoFormPage() {
     return ''
   }, [formaRecebimento, condicaoPagamento, paymentConditions, totalComDesconto, jurosLigado])
 
-  // Apply markup on itens when boleto condition changes
+  /** Quando troca produto/preço base de uma linha (sem mudar só a quantidade), reaplica markup. Não incluir `preco` exibido (evita loop). */
+  const itensBaseSignature = useMemo(
+    () => itens.map((it: any) => `${it.id}:${it.produtoId ?? ''}:${it.originalPreco ?? ''}`).join('|'),
+    [itens]
+  )
+
+  // Recalcula preço unitário dos itens conforme taxa administrativa (markupPct) e juros — mesmo critério do subtotal/total.
   useEffect(() => {
-    const applyMarkup = () => {
-      if (String(formaRecebimento || '').trim().toLowerCase() !== 'boleto' || !condicaoPagamento) {
-        // revert to original prices
-        setItens((arr) => arr.map((it: any) => ({ ...it, preco: (it.originalPreco != null ? it.originalPreco : it.preco) })))
-        return
-      }
-      // extract first numeric day from condicaoPagamento
-      const m = String(condicaoPagamento).match(/\d+/)
-      const firstDay = m ? Number(m[0]) : NaN
-      let pct = 0
-      if (!isNaN(firstDay)) {
-        if (firstDay < 30) pct = 0.02
-        else if (firstDay >= 30 && firstDay < 40) pct = 0.03
-        else pct = 0.04
-      } else {
-        pct = 0
-      }
-      if (pct === 0) {
-        setItens((arr) => arr.map((it: any) => ({ ...it, preco: (it.originalPreco != null ? it.originalPreco : it.preco) })))
-        return
-      }
-      setItens((arr) => arr.map((it: any) => {
-        const base = it.originalPreco != null ? it.originalPreco : it.preco
-        const newPrice = Math.round((Number(base || 0) * (1 + pct)) * 100) / 100
-        return { ...it, preco: newPrice }
-      }))
-    }
-    applyMarkup()
-  }, [condicaoPagamento, formaRecebimento])
+    const forma = String(formaRecebimento || '').trim().toLowerCase()
+    const aplicarTaxa = forma === 'boleto' && Boolean(condicaoPagamento) && jurosLigado
+    const fator = aplicarTaxa ? 1 + (Number.isFinite(markupPct) ? markupPct : 0) : 1
+
+    setItens((arr) =>
+      arr.map((it: any) => {
+        const raw = Number(it.preco || 0)
+        const hasOrig = it.originalPreco != null && Number.isFinite(Number(it.originalPreco))
+        const baseCatalog = hasOrig ? Number(it.originalPreco) : raw
+        const baseArred = Math.round(baseCatalog * 100) / 100
+        const novo = Math.round(baseArred * fator * 100) / 100
+        return { ...it, originalPreco: baseArred, preco: novo }
+      })
+    )
+  }, [formaRecebimento, condicaoPagamento, jurosLigado, markupPct, itens.length, itensBaseSignature])
 
   const onNomeChange = (itemId: number, value: string) => {
     setItens((arr) => arr.map((it) => it.id === itemId ? { ...it, nome: value } : it))
@@ -2082,6 +2074,7 @@ export default function PedidoFormPage() {
                     quantidade: qtyModalValue,
                     unidade: 'PC',
                     preco: Number(qtyModalProduct.preco || 0),
+                    originalPreco: Number(qtyModalProduct.preco || 0),
                     imagemUrl: qtyModalProduct.imagem || undefined,
                   },
                 ]
