@@ -7,6 +7,7 @@ import { Card, Row, Col, Form, Button, Table } from 'react-bootstrap'
 import { EMPRESAS_SUPRIMENTOS } from '@/constants/empresas-suprimentos'
 import { EmpresaSelect } from './EmpresaSelect'
 import { formatCnpjDisplay, maskCnpjInput } from '@/lib/cnpjFormat'
+import type { OrdemCompraSalvarPayload } from '@/lib/ordemCompra/ordemCompraSalvar'
 import { parcelasFromCondicaoText, type ParcelaForm } from '@/lib/suprimentosParcelas'
 import type {
   CatalogItem,
@@ -43,6 +44,8 @@ export type OrdemCompraFormProps = {
   variant?: 'page' | 'modal'
   /** Quando preenchido, aplica uma vez (use `key` no pai para reabrir outro pedido). */
   initialSnapshot?: OrdemCompraFormSnapshot | null
+  /** No modal da lista: grava alterações neste pedido (PATCH) em vez de criar outro. */
+  existingOrderId?: number | null
   onCancel?: () => void
   onSaved?: () => void
 }
@@ -50,6 +53,7 @@ export type OrdemCompraFormProps = {
 export function OrdemCompraForm({
   variant = 'page',
   initialSnapshot = null,
+  existingOrderId = null,
   onCancel,
   onSaved,
 }: OrdemCompraFormProps) {
@@ -382,7 +386,7 @@ export function OrdemCompraForm({
 
     setSaving(true)
     try {
-      const body: Record<string, unknown> = {
+      const body: OrdemCompraSalvarPayload = {
         empresa_id: empresaId,
         data,
         dataPrevista,
@@ -398,8 +402,13 @@ export function OrdemCompraForm({
         parcelas: parcelas.length ? parcelas : undefined,
       }
 
-      const res = await fetch('/api/suprimentos/ordens-compra', {
-        method: 'POST',
+      const isUpdate =
+        variant === 'modal' && existingOrderId != null && Number.isFinite(existingOrderId) && existingOrderId > 0
+      const url = isUpdate
+        ? `/api/suprimentos/ordens-compra/${existingOrderId}`
+        : '/api/suprimentos/ordens-compra'
+      const res = await fetch(url, {
+        method: isUpdate ? 'PATCH' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
@@ -883,7 +892,7 @@ export function OrdemCompraForm({
                 <div className="d-flex justify-content-between align-items-center gap-2 pt-3 mt-1 border-top">
                   {variant === 'modal' ? (
                     <Button type="button" variant="outline-secondary" onClick={onCancel}>
-                      Fechar
+                      Cancelar
                     </Button>
                   ) : (
                     <Link href="/suprimentos/ordem-de-compra" className="btn btn-outline-secondary">
@@ -891,7 +900,11 @@ export function OrdemCompraForm({
                     </Link>
                   )}
                   <Button type="submit" variant="primary" disabled={saving}>
-                    {saving ? 'Salvando…' : variant === 'modal' ? 'Salvar como novo pedido' : 'Salvar ordem'}
+                    {saving
+                      ? 'Salvando…'
+                      : variant === 'modal'
+                        ? 'Salvar alterações'
+                        : 'Salvar ordem'}
                   </Button>
                 </div>
               </Col>

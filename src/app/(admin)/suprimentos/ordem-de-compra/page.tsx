@@ -394,6 +394,7 @@ export default function OrdemCompraListPage() {
             <OrdemCompraForm
               key={modalOrderId}
               variant="modal"
+              existingOrderId={modalOrderId}
               initialSnapshot={modalSnapshot}
               onCancel={closePedidoModal}
               onSaved={() => {
