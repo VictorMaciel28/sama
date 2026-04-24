@@ -7,6 +7,15 @@ import { Card, Row, Col, Form, Button, Table, Modal, Spinner, OverlayTrigger, To
 import { getPedidoByNumero, Pedido, PedidoStatus, getNextPedidoNumero, savePedido as savePedidoRemote } from '@/services/pedidos2'
 import { createProposta } from '@/services/propostas'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
+import {
+  formatPaymentConditionSelectValue,
+  parsePaymentConditionSelectValue,
+  resolvePaymentCondition,
+  tierToMarkupDecimal,
+  PAYMENT_ADMIN_TIER_LABELS,
+  PAYMENT_ADMIN_TIER_ORDER,
+  type PaymentConditionRow,
+} from '@/lib/paymentConditions'
 
 const requestCache = new Map<string, { ts: number; data: any }>()
 const requestInFlight = new Map<string, Promise<any>>()
@@ -53,8 +62,6 @@ export default function PedidoFormPage() {
 
   const [formaRecebimento, setFormaRecebimento] = useState('Boleto')
   const [condicaoPagamento, setCondicaoPagamento] = useState('')
-  /** Ligado = ordem dos mínimos no select prioriza “com juros”; valida principalmente valor mínimo com juros. Persiste em platform_order. */
-  const [jurosLigado, setJurosLigado] = useState(true)
   const [descontoPercent, setDescontoPercent] = useState<number>(0)
   const [receiveForms, setReceiveForms] = useState<Array<{ id: number; nome: string; situacao: number }>>([])
 
@@ -307,16 +314,11 @@ export default function PedidoFormPage() {
               quantidade: Number(it?.quantidade || 0),
               unidade: String(it?.unidade || 'UN'),
               preco: Number(it?.preco || 0),
-              originalPreco: Number(it?.preco || 0),
+              // `originalPreco` fica indefinido: o efeito de taxa infere o preço base a partir do gravado + condição.
             }))
           )
           setFormaRecebimento(existing.forma_recebimento || 'Boleto')
           setCondicaoPagamento(existing.condicao_pagamento || '')
-          if (typeof (existing as any).juros_ligado === 'boolean') {
-            setJurosLigado((existing as any).juros_ligado)
-          } else {
-            setJurosLigado(true)
-          }
           const addr = (existing as any)?.endereco_entrega || {}
 
           const linkedVendedor = (existing as any)?.selected_vendedor
@@ -414,13 +416,20 @@ export default function PedidoFormPage() {
     if (!catalogQuery || catalogQuery.trim().length === 0) {
       if (!isNew) {
         return (itens || [])
-          .map((it) => ({
-            id: Number(it.produtoId || 0),
-            nome: String(it.nome || ''),
-            codigo: it.sku ? String(it.sku) : undefined,
-            preco: Number(it.preco || 0),
-            imagem: it.imagemUrl || null,
-          }))
+          .map((it) => {
+            const withOrig = it as ItemPedidoWithOriginal
+            const base =
+              withOrig.originalPreco != null && Number.isFinite(Number(withOrig.originalPreco))
+                ? Number(withOrig.originalPreco)
+                : Number(it.preco || 0)
+            return {
+              id: Number(it.produtoId || 0),
+              nome: String(it.nome || ''),
+              codigo: it.sku ? String(it.sku) : undefined,
+              preco: base,
+              imagem: it.imagemUrl || null,
+            }
+          })
           .filter((x) => !!x.nome)
       }
     }
@@ -1015,7 +1024,7 @@ export default function PedidoFormPage() {
         total: totalComDesconto,
         forma_recebimento: formaRecebimento,
         condicao_pagamento: condicaoPagamento,
-        juros_ligado: jurosLigado,
+        juros_ligado: true,
         idContato,
         vendedor: {
           id: Number.isFinite(vendedorIdNum) && vendedorIdNum > 0 ? vendedorIdNum : 0,
@@ -1113,9 +1122,7 @@ export default function PedidoFormPage() {
   }, [subtotal, descontoPercent, descontoHabilitado, form.total, isNew, itens.length])
 
   // Payment conditions are loaded from server (payment_condition table).
-  const [paymentConditions, setPaymentConditions] = useState<
-    { id: number; name: string; percent: number; valor_minimo: number | null; valor_minimo_sem_taxa: number | null }[]
-  >([])
+  const [paymentConditions, setPaymentConditions] = useState<PaymentConditionRow[]>([])
 
   useEffect(() => {
     let mounted = true
@@ -1126,13 +1133,15 @@ export default function PedidoFormPage() {
           setPaymentConditions(
             json.data.map((r: any) => {
               const vm = r.valor_minimo != null ? Number(r.valor_minimo) : null
-              const vms = r.valor_minimo_sem_taxa != null ? Number(r.valor_minimo_sem_taxa) : null
+              const tierRaw = Number(r.admin_tier ?? 0)
+              const admin_tier = tierRaw === 2 ? 2 : tierRaw === 1 ? 1 : 0
               return {
                 id: Number(r.id),
                 name: String(r.name),
                 percent: Number(r.percent || 0),
+                admin_tier,
                 valor_minimo: vm != null && Number.isFinite(vm) && vm > 0 ? vm : null,
-                valor_minimo_sem_taxa: vms != null && Number.isFinite(vms) && vms > 0 ? vms : null,
+                valor_minimo_sem_taxa: null,
               }
             })
           )
@@ -1145,6 +1154,22 @@ export default function PedidoFormPage() {
       mounted = false
     }
   }, [])
+
+  const resolvedCondicao = useMemo(
+    () => resolvePaymentCondition(condicaoPagamento, paymentConditions),
+    [condicaoPagamento, paymentConditions]
+  )
+
+  /** Condições antigas gravadas só com o nome: associa ao id do cadastro (prioriza faixa isenta, depois 3%, 5%). */
+  useEffect(() => {
+    if (!condicaoPagamento) return
+    if (parsePaymentConditionSelectValue(condicaoPagamento) != null) return
+    const same = paymentConditions.filter((c) => c.name === condicaoPagamento)
+    if (same.length >= 1) {
+      const pick = [...same].sort((a, b) => a.admin_tier - b.admin_tier)[0]
+      setCondicaoPagamento(formatPaymentConditionSelectValue(pick.id))
+    }
+  }, [paymentConditions, condicaoPagamento])
 
   useEffect(() => {
     let mounted = true
@@ -1176,39 +1201,38 @@ export default function PedidoFormPage() {
     return found?.id ?? 0
   }, [receiveForms, formaRecebimento])
 
-  const condicoesPagamentoOptions = useMemo(() => {
-    const baseOptions = paymentConditions.map((c) => ({
-      value: c.name,
-      label: c.name,
-      despadronizado: false,
-    }))
+  const isTinyOrder = String((form as any)?.sistema_origem || '').toLowerCase() === 'tiny'
 
-    const isTinyOrder = String((form as any)?.sistema_origem || '').toLowerCase() === 'tiny'
+  /** Condição atual não bate com nenhum cadastro (ex.: Tiny legado). */
+  const condicaoDespadronizada = useMemo(() => {
+    if (!condicaoPagamento) return false
+    const byId = parsePaymentConditionSelectValue(condicaoPagamento)
+    if (byId != null) return !paymentConditions.some((c) => c.id === byId)
+    if (paymentConditions.some((c) => c.name === condicaoPagamento)) return false
+    if (condicaoPagamento === 'À vista' || condicaoPagamento === '7 dias') return false
+    return true
+  }, [condicaoPagamento, paymentConditions])
 
-    // Keep persisted condition visible even if not returned in current list.
-    if (condicaoPagamento && !baseOptions.some((opt) => opt.value === condicaoPagamento)) {
-      return [
-        {
-          value: condicaoPagamento,
-          label: isTinyOrder ? `${condicaoPagamento} (Despadronizado)` : condicaoPagamento,
-          despadronizado: isTinyOrder,
-        },
-        ...baseOptions,
-      ]
+  const nomeParcelasFonte = useMemo(() => {
+    if (parsePaymentConditionSelectValue(condicaoPagamento) != null) {
+      return resolvedCondicao?.name ?? ''
     }
-    if (!baseOptions.some((opt) => opt.value === 'À vista')) {
-      return [...baseOptions, { value: 'À vista', label: 'À vista', despadronizado: false }]
-    }
-    return baseOptions
-  }, [formaRecebimento, paymentConditions, condicaoPagamento, form])
+    return condicaoPagamento
+  }, [condicaoPagamento, resolvedCondicao])
 
   const diasParcelas: number[] = useMemo(() => {
     if (String(formaRecebimento || '').trim().toLowerCase() !== 'boleto') return []
     if (!condicaoPagamento) return []
-    if (condicaoPagamento === '7 dias') return [7]
-    const matches = condicaoPagamento.match(/\d+/g) || []
+    if (nomeParcelasFonte === '7 dias' || condicaoPagamento === '7 dias') return [7]
+    const raw = String(nomeParcelasFonte || condicaoPagamento)
+    // "45 dias direto", "60 dias direto": um único vencimento (só o 1º número), evita dígitos extras no texto.
+    if (/\bdireto\b/i.test(raw) && !/\d+\s*\/\s*\d+/.test(raw)) {
+      const m = raw.match(/\d+/)
+      return m ? [Number(m[0])].filter((n) => !isNaN(n)) : []
+    }
+    const matches = raw.match(/\d+/g) || []
     return matches.map((d) => Number(d)).filter((n) => !isNaN(n))
-  }, [formaRecebimento, condicaoPagamento])
+  }, [formaRecebimento, condicaoPagamento, nomeParcelasFonte])
 
   const parcelas = useMemo(() => {
     if (String(formaRecebimento || '').trim().toLowerCase() !== 'boleto' || diasParcelas.length === 0) return []
@@ -1224,38 +1248,32 @@ export default function PedidoFormPage() {
 
   const markupPct = useMemo(() => {
     if (String(formaRecebimento || '').trim().toLowerCase() !== 'boleto') return 0
-    // Prefer configured percentage from DB
-    const cfg = paymentConditions.find((c) => c.name === condicaoPagamento)
-    if (cfg) return Number(cfg.percent) / 100
-    // Fallback: derive from first day
+    if (resolvedCondicao) return tierToMarkupDecimal(resolvedCondicao.admin_tier)
+    // Fallback: derive from first day (condição livre / legado)
     let firstDay: number | null = null
     if (diasParcelas && diasParcelas.length > 0) firstDay = diasParcelas[0]
     if (firstDay == null || Number.isNaN(firstDay)) {
-      const m = String(condicaoPagamento || '').match(/\d+/)
+      const m = String(nomeParcelasFonte || condicaoPagamento || '').match(/\d+/)
       firstDay = m ? Number(m[0]) : NaN
     }
     if (Number.isNaN(firstDay) || firstDay == null) return 0
     if (firstDay < 30) return 0.02
     if (firstDay >= 30 && firstDay < 40) return 0.03
     return 0.04
-  }, [formaRecebimento, diasParcelas, condicaoPagamento, paymentConditions])
+  }, [formaRecebimento, diasParcelas, condicaoPagamento, nomeParcelasFonte, paymentConditions, resolvedCondicao])
 
-  // Validação: valor mínimo conforme condição (com juros x sem juros, conforme switch)
   const pagamentoParceladoErro = useMemo(() => {
     if (String(formaRecebimento || '').trim().toLowerCase() !== 'boleto' || !condicaoPagamento) return ''
-    const cfg = paymentConditions.find((c) => c.name === condicaoPagamento)
+    const cfg = resolvedCondicao
     if (!cfg) return ''
-    const minCom = cfg.valor_minimo != null && cfg.valor_minimo > 0 ? cfg.valor_minimo : null
-    const minSem = cfg.valor_minimo_sem_taxa != null && cfg.valor_minimo_sem_taxa > 0 ? cfg.valor_minimo_sem_taxa : null
-    const min = jurosLigado ? minCom ?? minSem : minSem ?? minCom
+    const min = cfg.valor_minimo != null && cfg.valor_minimo > 0 ? cfg.valor_minimo : null
     if (min == null) return ''
     if (totalComDesconto < min) {
       const fmt = min.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-      const modo = jurosLigado ? 'com juros' : 'sem juros'
-      return `O valor mínimo do pedido (${modo}) deve ser de ${fmt}, de acordo com o método de pagamento escolhido.`
+      return `O valor mínimo do pedido deve ser de ${fmt}, de acordo com a condição de pagamento escolhida.`
     }
     return ''
-  }, [formaRecebimento, condicaoPagamento, paymentConditions, totalComDesconto, jurosLigado])
+  }, [formaRecebimento, condicaoPagamento, resolvedCondicao, totalComDesconto])
 
   /** Quando troca produto/preço base de uma linha (sem mudar só a quantidade), reaplica markup. Não incluir `preco` exibido (evita loop). */
   const itensBaseSignature = useMemo(
@@ -1263,23 +1281,52 @@ export default function PedidoFormPage() {
     [itens]
   )
 
-  // Recalcula preço unitário dos itens conforme taxa administrativa (markupPct) e juros — mesmo critério do subtotal/total.
+  // Recalcula preço unitário dos itens conforme taxa administrativa da faixa escolhida (markupPct).
   useEffect(() => {
     const forma = String(formaRecebimento || '').trim().toLowerCase()
-    const aplicarTaxa = forma === 'boleto' && Boolean(condicaoPagamento) && jurosLigado
+    if (forma === 'boleto' && String(condicaoPagamento || '').trim() && paymentConditions.length === 0) {
+      return
+    }
+    const aplicarTaxa = forma === 'boleto' && Boolean(condicaoPagamento) && markupPct > 0
     const fator = aplicarTaxa ? 1 + (Number.isFinite(markupPct) ? markupPct : 0) : 1
 
-    setItens((arr) =>
-      arr.map((it: any) => {
-        const raw = Number(it.preco || 0)
-        const hasOrig = it.originalPreco != null && Number.isFinite(Number(it.originalPreco))
-        const baseCatalog = hasOrig ? Number(it.originalPreco) : raw
+    setItens((arr) => {
+      if (arr.length === 0) return arr
+      let anyChange = false
+      const next = arr.map((it: any) => {
+        const rawLine = Number(it.preco || 0)
+        const hasOrig =
+          it.originalPreco != null && Number.isFinite(Number(it.originalPreco)) && Number(it.originalPreco) > 0
+        let baseCatalog: number
+        if (hasOrig) {
+          baseCatalog = Number(it.originalPreco)
+        } else {
+          // Pedido carregado do servidor: `preco` costuma ser o valor já com a taxa da condição gravada.
+          baseCatalog =
+            forma === 'boleto' &&
+            String(condicaoPagamento || '').trim() &&
+            markupPct > 0 &&
+            rawLine > 0
+              ? Math.round((rawLine / (1 + markupPct)) * 100) / 100
+              : Math.round(rawLine * 100) / 100
+        }
         const baseArred = Math.round(baseCatalog * 100) / 100
         const novo = Math.round(baseArred * fator * 100) / 100
+        if (Math.abs(Number(it.preco) - novo) > 0.0001 || Math.abs(Number(it.originalPreco ?? 0) - baseArred) > 0.0001) {
+          anyChange = true
+        }
         return { ...it, originalPreco: baseArred, preco: novo }
       })
-    )
-  }, [formaRecebimento, condicaoPagamento, jurosLigado, markupPct, itens.length, itensBaseSignature])
+      return anyChange ? next : arr
+    })
+  }, [
+    formaRecebimento,
+    condicaoPagamento,
+    markupPct,
+    itens.length,
+    itensBaseSignature,
+    paymentConditions.length,
+  ])
 
   const onNomeChange = (itemId: number, value: string) => {
     setItens((arr) => arr.map((it) => it.id === itemId ? { ...it, nome: value } : it))
@@ -1434,28 +1481,6 @@ export default function PedidoFormPage() {
               .pedido-line-items-table .col-nome {
                 word-break: break-word;
               }
-              /* Switch compacto de juros (ao lado da condição de pagamento) */
-              .pedido-juros-switch-outer {
-                border: 1px solid var(--bs-border-color);
-                border-radius: 0.5rem;
-                padding: 0.15rem 0.45rem 0.15rem 0.35rem;
-                background: var(--bs-body-bg);
-                box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.04);
-              }
-              .pedido-juros-switch-outer .form-switch {
-                padding-left: 0;
-                margin-bottom: 0;
-                min-height: 0;
-                display: flex;
-                align-items: center;
-              }
-              .pedido-juros-switch-outer .form-switch .form-check-input {
-                width: 1.85rem;
-                height: 1rem;
-                margin-top: 0;
-                margin-left: 0;
-                cursor: pointer;
-              }
             `}</style>
             <Col lg={4}>
               <Form.Label>Cliente</Form.Label>
@@ -1515,52 +1540,47 @@ export default function PedidoFormPage() {
               </Form.Select>
             </Col>
             <Col lg={4}>
-              <Form.Label className="d-flex align-items-center justify-content-between gap-2">
-                <span>Condição de pagamento</span>
-                <span className="fw-semibold text-nowrap">Juros</span>
-              </Form.Label>
-              <div className="d-flex align-items-center gap-2 flex-wrap flex-sm-nowrap">
-                <Form.Select
-                  className="flex-grow-1"
-                  style={{ minWidth: 0 }}
-                  value={condicaoPagamento}
-                  onChange={(e) => setCondicaoPagamento(e.target.value)}
-                >
-                  <option value="">Selecione</option>
-                  {condicoesPagamentoOptions.map((opt) => {
-                    const cfg = paymentConditions.find((c) => c.name === opt.value)
-                    const com = cfg?.valor_minimo != null && cfg.valor_minimo > 0 ? cfg.valor_minimo : null
-                    const sem = cfg?.valor_minimo_sem_taxa != null && cfg.valor_minimo_sem_taxa > 0 ? cfg.valor_minimo_sem_taxa : null
-                    const minAtivo = jurosLigado ? com : sem
-                    const minStr =
-                      minAtivo != null
-                        ? Number(minAtivo).toLocaleString('pt-BR', { minimumFractionDigits: 0, maximumFractionDigits: 2 })
-                        : ''
-                    const labelText =
-                      minStr !== '' ? `${opt.label} (Min. ${minStr})` : opt.label
-                    return (
-                      <option key={opt.value} value={opt.value}>
-                        {labelText}
-                      </option>
-                    )
-                  })}
-                </Form.Select>
-                <div className="d-flex align-items-center flex-shrink-0 pedido-juros-switch-outer" title="Juros nas condições de pagamento">
-                  <Form.Check
-                    type="switch"
-                    id="pedido-juros-ligado"
-                    className="form-switch mb-0"
-                    checked={jurosLigado}
-                    onChange={(e) => setJurosLigado(e.target.checked)}
-                    role="switch"
-                    aria-checked={jurosLigado}
-                    aria-label="Juros ligado ou desligado"
-                  />
-                  <span className="text-secondary fw-medium ms-1" style={{ fontSize: '0.7rem', lineHeight: 1.1, whiteSpace: 'nowrap' }}>
-                    {jurosLigado ? 'Ligado' : 'Desligado'}
-                  </span>
-                </div>
-              </div>
+              <Form.Label>Condição de pagamento</Form.Label>
+              <Form.Select
+                value={condicaoPagamento}
+                onChange={(e) => setCondicaoPagamento(e.target.value)}
+              >
+                <option value="">Selecione</option>
+                {condicaoDespadronizada && condicaoPagamento ? (
+                  <option value={condicaoPagamento}>
+                    {isTinyOrder ? `${condicaoPagamento} (Despadronizado)` : condicaoPagamento}
+                  </option>
+                ) : null}
+                {!paymentConditions.some((c) => c.name.trim() === 'À vista') ? (
+                  <option value="À vista">À vista</option>
+                ) : null}
+                {!paymentConditions.some((c) => c.name.trim() === '7 dias') ? (
+                  <option value="7 dias">7 dias</option>
+                ) : null}
+                {PAYMENT_ADMIN_TIER_ORDER.map((tier) => {
+                  const tierConds = paymentConditions.filter((c) => c.admin_tier === tier)
+                  if (tierConds.length === 0) return null
+                  return (
+                    <optgroup key={tier} label={PAYMENT_ADMIN_TIER_LABELS[tier] ?? `Faixa ${tier}`}>
+                      {tierConds.map((c) => {
+                        const minStr =
+                          c.valor_minimo != null && c.valor_minimo > 0
+                            ? Number(c.valor_minimo).toLocaleString('pt-BR', {
+                                minimumFractionDigits: 0,
+                                maximumFractionDigits: 2,
+                              })
+                            : ''
+                        const labelText = minStr !== '' ? `${c.name} (Min. ${minStr})` : c.name
+                        return (
+                          <option key={c.id} value={formatPaymentConditionSelectValue(c.id)}>
+                            {labelText}
+                          </option>
+                        )
+                      })}
+                    </optgroup>
+                  )
+                })}
+              </Form.Select>
             </Col>
             {/* removed extra placeholder column */}
           </Row>

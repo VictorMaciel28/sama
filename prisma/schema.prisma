@@ -611,10 +611,12 @@ model user_branch {
 model payment_condition {
   id           Int      @id @default(autoincrement())
   name         String   @db.VarChar(100) // e.g. "14/21D"
-  percent      Decimal  @db.Decimal(5, 2) // administrative additional percent (e.g. 3.00)
-  /// Valor mínimo do pedido (BRL) com taxa administrativa; null ou 0 = sem exigência.
+  percent      Decimal  @db.Decimal(5, 2) // espelha a faixa: 0 / 3 / 5 (mantido para relatórios e legado)
+  /// 0 = taxa isenta, 1 = 3%, 2 = 5%.
+  admin_tier   Int      @default(0)
+  /// Valor mínimo do pedido (BRL); null ou 0 = sem exigência.
   valor_minimo          Decimal? @db.Decimal(15, 2)
-  /// Valor mínimo do pedido (BRL) sem taxa administrativa; null ou 0 = sem exigência.
+  /// Legado: não usado na UI nova; manter null.
   valor_minimo_sem_taxa Decimal? @db.Decimal(15, 2)
   created_at   DateTime @default(now()) @db.DateTime(0)
 }
