@@ -141,3 +141,45 @@ export async function GET(_req: Request, { params }: { params: { externo: string
     return NextResponse.json({ ok: false, error: error?.message ?? 'Erro ao listar vendedores' }, { status: 500 })
   }
 }
+
+/** Remove apenas o vínculo supervisor–representante (`supervisor_vendor_links`). O cadastro do vendedor permanece. */
+export async function DELETE(req: Request, { params }: { params: { externo: string } }) {
+  try {
+    const externo = decodeURIComponent(params?.externo || '').trim()
+    const scope = await resolveSupervisorSupervisedList(externo)
+    if (scope.ok === false) {
+      return NextResponse.json({ ok: false, error: scope.message }, { status: scope.status })
+    }
+
+    const body = await req.json().catch(() => ({}))
+    const vendedorExterno = String(body?.vendedor_externo ?? '').trim()
+    if (!vendedorExterno) {
+      return NextResponse.json({ ok: false, error: 'Representante não informado' }, { status: 400 })
+    }
+
+    if (!scope.supervisedExternos.includes(vendedorExterno)) {
+      return NextResponse.json({ ok: false, error: 'Este representante não está na sua carteira.' }, { status: 404 })
+    }
+
+    const supervisor = await prisma.supervisor.findUnique({
+      where: { id_vendedor_externo: externo },
+      select: { id: true },
+    })
+    if (!supervisor) {
+      return NextResponse.json({ ok: false, error: 'Supervisor não encontrado' }, { status: 404 })
+    }
+
+    const del = await prisma.supervisor_vendor_links.deleteMany({
+      where: { supervisor_id: supervisor.id, vendedor_externo: vendedorExterno },
+    })
+
+    if (del.count === 0) {
+      return NextResponse.json({ ok: false, error: 'Vínculo não encontrado ou já removido.' }, { status: 404 })
+    }
+
+    return NextResponse.json({ ok: true, message: 'Representante removido da sua carteira.' })
+  } catch (error: unknown) {
+    const msg = error instanceof Error ? error.message : 'Erro ao remover vínculo'
+    return NextResponse.json({ ok: false, error: msg }, { status: 500 })
+  }
+}

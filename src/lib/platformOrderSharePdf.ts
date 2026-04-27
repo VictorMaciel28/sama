@@ -1,5 +1,6 @@
 import { jsPDF } from 'jspdf'
 import autoTable from 'jspdf-autotable'
+import type { ShareDocumentPayload } from '@/lib/platformOrderSharePayload'
 
 const STATUS_LABELS: Record<string, string> = {
   PROPOSTA: 'Proposta',
@@ -30,21 +31,8 @@ function getFinalY(doc: jsPDF, fallback: number): number {
   return t.lastAutoTable?.finalY ?? fallback
 }
 
-export type PlatformOrderSharePdfInput = {
-  numero: number
-  data: Date | string
-  cliente: string
-  cnpj: string
-  status: string
-  total: unknown
-  forma_recebimento?: string | null
-  condicao_pagamento?: string | null
-  endereco_entrega?: unknown
-  products?: Array<{ nome?: string | null; codigo?: string | null; quantidade?: unknown; preco?: unknown }>
-}
-
-/** PDF em memória (Buffer), sem Puppeteer nem escrita em disco — compatível com Vercel. */
-export function renderPlatformOrderPdfBuffer(order: PlatformOrderSharePdfInput): Buffer {
+/** PDF em memória (Buffer), sem Puppeteer — mesmo conteúdo base do email HTML. Valores líquidos de produto/qtd × preço e total do pedido (sem discriminação de impostos). */
+export function renderPlatformOrderPdfBuffer(order: ShareDocumentPayload): Buffer {
   const doc = new jsPDF({ unit: 'pt', format: 'a4' })
   const pageW = doc.internal.pageSize.getWidth()
   const margin = 40
@@ -52,14 +40,28 @@ export function renderPlatformOrderPdfBuffer(order: PlatformOrderSharePdfInput):
 
   doc.setFontSize(18)
   doc.setFont('helvetica', 'bold')
-  doc.text(`Pedido #${order.numero}`, margin, y)
+  doc.text(`Pedido nº ${order.numero}`, margin, y)
   y += 22
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
   doc.setTextColor(107, 114, 128)
   doc.text(`Emitido em ${formatDate(order.data)}`, margin, y)
   doc.setTextColor(0, 0, 0)
-  y += 28
+  y += 18
+
+  const meta: string[] = []
+  if (order.sistema_origem) meta.push(`Origem: ${String(order.sistema_origem).toUpperCase()}`)
+  if (order.tiny_id) meta.push(`Pedido Tiny: ${order.tiny_id}`)
+  if (order.nf_referencia) meta.push(`Ref. NF: ${order.nf_referencia}`)
+  if (meta.length) {
+    doc.setFontSize(9)
+    doc.setTextColor(75, 85, 99)
+    doc.text(meta.join('   ·   '), margin, y)
+    doc.setTextColor(0, 0, 0)
+    y += 16
+  } else {
+    y += 10
+  }
 
   const statusLabel = STATUS_LABELS[String(order.status)] || String(order.status || '')
 
@@ -72,6 +74,8 @@ export function renderPlatformOrderPdfBuffer(order: PlatformOrderSharePdfInput):
   doc.text(String(order.cliente || ''), margin, y)
   y += 12
   doc.text(String(order.cnpj || ''), margin, y)
+  y += 12
+  doc.text(`Vendedor: ${order.vendedor_label}`, margin, y)
   y += 20
 
   doc.setFont('helvetica', 'bold')
@@ -109,7 +113,7 @@ export function renderPlatformOrderPdfBuffer(order: PlatformOrderSharePdfInput):
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(12)
-  doc.text('Total', margin, y)
+  doc.text('Total do pedido', margin, y)
   y += 18
   doc.setFontSize(18)
   doc.text(formatCurrency(Number(order.total) || 0), margin, y)
@@ -123,31 +127,41 @@ export function renderPlatformOrderPdfBuffer(order: PlatformOrderSharePdfInput):
 
   const items = Array.isArray(order.products) ? order.products : []
   const body = items.map((item) => {
-    const quantity = Number(item?.quantidade || 0)
-    const price = Number(item?.preco || 0)
-    const lineTotal = quantity * price
     return [
-      String(item?.nome || '—'),
-      String(item?.codigo || '—'),
-      String(quantity),
-      formatCurrency(price),
-      formatCurrency(lineTotal),
+      item.nome,
+      item.codigo,
+      String(item.quantidade),
+      item.unidade,
+      formatCurrency(item.preco),
+      formatCurrency(item.subtotal),
     ]
   })
 
   autoTable(doc, {
     startY: y,
-    head: [['Produto', 'Código', 'Qtd', 'Valor unit.', 'Subtotal']],
-    body: body.length > 0 ? body : [['Nenhum item registrado', '—', '—', '—', '—']],
+    head: [['Produto', 'Código', 'Qtd', 'Un.', 'Vl. unit.', 'Subtotal']],
+    body:
+      body.length > 0
+        ? body
+        : [['Nenhum item registrado', '—', '—', '—', '—', '—']],
     styles: { fontSize: 9, cellPadding: 6 },
     headStyles: { fillColor: [15, 23, 42], textColor: 255 },
     margin: { left: margin, right: margin },
   })
 
-  const finalY = getFinalY(doc, y) + 20
+  const finalY = getFinalY(doc, y) + 14
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(8)
+  doc.setTextColor(120, 120, 120)
+  doc.text(
+    'Totais conforme cadastro do pedido na plataforma (sem discriminação de impostos por item).',
+    margin,
+    finalY
+  )
+  doc.setTextColor(0, 0, 0)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(11)
-  doc.text(`Total: ${formatCurrency(Number(order.total) || 0)}`, pageW - margin, finalY, { align: 'right' })
+  doc.text(`Total: ${formatCurrency(Number(order.total) || 0)}`, pageW - margin, finalY + 18, { align: 'right' })
 
   return Buffer.from(doc.output('arraybuffer'))
 }

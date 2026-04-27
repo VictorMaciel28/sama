@@ -25,6 +25,13 @@ export const MENU_ITEMS: MenuItemType[] = [
         url: '/pedidos?entity=proposta',
         parentKey: 'vendas',
       },
+      {
+        key: 'pos-venda',
+        label: 'Pós venda',
+        icon: 'ri:customer-service-2-line',
+        url: '/vendas/pos-venda',
+        parentKey: 'vendas',
+      },
     ],
   },
   {

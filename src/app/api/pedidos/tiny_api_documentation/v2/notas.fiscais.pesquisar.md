@@ -3,7 +3,7 @@ Serviço destinado a fazer consulta de Notas Fiscais.
 
 REST
 REST URL
-https://api.tiny.com.br/api2/notas.fiscais.pesquisa.php
+[https://api.tiny.com.br/api2/notas.fiscais.pesquisa.php](https://api.tiny.com.br/api2/notas.fiscais.pesquisa.php)
 Parâmetros do serviço
 Elemento	Tipo	Ocorrência	Descrição
 token	string	obrigatório	Chave gerada para identificar sua empresa
@@ -94,7 +94,7 @@ retorno.notas_fiscais[ ].nota_fiscal.url_rastreamento	string	120	opcional	URL de
 Exemplos de chamada da API
 Exemplos da chamada em REST
 
-$url = 'https://api.tiny.com.br/api2/notas.fiscais.pesquisa.php';
+$url = '[https://api.tiny.com.br/api2/notas.fiscais.pesquisa.php](https://api.tiny.com.br/api2/notas.fiscais.pesquisa.php)';
 $token = 'coloque aqui a sua chave da api';
 $numero= 'xxxxx';
 $data = "token=$token&numero=$numero&formato=JSON";
@@ -178,7 +178,7 @@ Exemplos do retorno do serviço em JSON
             "cidade": "Bento Gonçalves",
             "uf": "RS",
             "fone": "(54) 1234-1234",
-            "email": "henrique1@tiny.com.br"
+            "email": "[henrique1@tiny.com.br](mailto:henrique1@tiny.com.br)"
           },
           "endereco_entrega": {
             "tipo_pessoa": "F",
@@ -204,7 +204,7 @@ Exemplos do retorno do serviço em JSON
           "situacao": "1",
           "descricao_situacao": "Pendente",
           "codigo_rastreamento": "EE201798383BR",
-          "url_rastreamento": "http://www.issoehumaurl.com"
+          "url_rastreamento": "[http://www.issoehumaurl.com](http://www.issoehumaurl.com)"
         }
       }
     ]

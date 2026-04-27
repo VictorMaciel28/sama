@@ -42,26 +42,29 @@ export async function POST(req: Request) {
     const numeroRaw = String(body?.numero ?? '').trim()
     const cnpjRaw = String(body?.cnpj ?? '').trim()
 
-    if (!numeroRaw || !cnpjRaw) {
+    if (!numeroRaw) {
       return NextResponse.json(
-        { ok: false, error: 'Informe o número da nota fiscal e o CNPJ para pesquisar.' },
+        { ok: false, error: 'Informe o número da nota fiscal para pesquisar.' },
         { status: 400 }
       )
     }
 
     const cnpjDigits = onlyDigits(cnpjRaw)
-    if (cnpjDigits.length !== 14) {
-      return NextResponse.json({ ok: false, error: 'CNPJ inválido. Confira os 14 dígitos.' }, { status: 400 })
+    const cnpjInformado = cnpjRaw.length > 0
+    if (cnpjInformado && cnpjDigits.length !== 14) {
+      return NextResponse.json({ ok: false, error: 'CNPJ inválido. Informe os 14 dígitos ou deixe em branco.' }, { status: 400 })
     }
 
     if (!/\d/.test(numeroRaw)) {
       return NextResponse.json({ ok: false, error: 'Número da nota fiscal inválido.' }, { status: 400 })
     }
 
-    const json = await tinyV2Post('notas.fiscais.pesquisa.php', {
-      numero: numeroRaw,
-      cpf_cnpj: cnpjRaw,
-    })
+    const tinyParams: Record<string, string> = { numero: numeroRaw }
+    if (cnpjInformado && cnpjDigits.length === 14) {
+      tinyParams.cpf_cnpj = cnpjRaw
+    }
+
+    const json = await tinyV2Post('notas.fiscais.pesquisa.php', tinyParams)
 
     const status = String(json?.retorno?.status || '')
     if (status.toUpperCase() !== 'OK') {
@@ -85,14 +88,28 @@ export async function POST(req: Request) {
       )
     }
 
-    const filtradas = notas.filter(
-      (nf: any) => docClienteIgualCnpj(nf, cnpjDigits) && numerosNotaIguais(numeroRaw, nf.numero)
-    )
+    let filtradas = notas.filter((nf: any) => numerosNotaIguais(numeroRaw, nf.numero))
+
+    if (cnpjInformado && cnpjDigits.length === 14) {
+      filtradas = filtradas.filter((nf: any) => docClienteIgualCnpj(nf, cnpjDigits))
+    }
 
     if (filtradas.length === 0) {
+      const hint = cnpjInformado
+        ? 'Nenhuma nota encontrada com esse número e CNPJ.'
+        : 'Nenhuma nota encontrada com esse número. Se existir mais de uma nota com o mesmo número, informe também o CNPJ do destinatário.'
+      return NextResponse.json({ ok: false, error: hint }, { status: 404 })
+    }
+
+    if (filtradas.length > 1 && !cnpjInformado) {
       return NextResponse.json(
-        { ok: false, error: 'Nenhuma nota encontrada com esse número e CNPJ.' },
-        { status: 404 }
+        {
+          ok: false,
+          error:
+            'Foram encontradas várias notas com esse número. Informe também o CNPJ do destinatário para identificar a nota correta.',
+          code: 'MULTIPLAS_NOTAS_SEM_CNPJ',
+        },
+        { status: 409 }
       )
     }
 

@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import { Button, Form, Modal, Spinner } from 'react-bootstrap'
+import { useNotificationContext } from '@/context/useNotificationContext'
+import IconifyIcon from '@/components/wrappers/IconifyIcon'
 
 type Row = {
   id: number
@@ -26,6 +28,7 @@ function nivelLabel(n: Row['nivel_acesso']) {
 export default function SupervisorVendedoresPage() {
   const params = useParams()
   const router = useRouter()
+  const { showNotification } = useNotificationContext()
   const externo = decodeURIComponent((params?.externo as string) || '')
   const [rows, setRows] = useState<Row[]>([])
   const [loading, setLoading] = useState(true)
@@ -40,6 +43,11 @@ export default function SupervisorVendedoresPage() {
   const [selectedTiny, setSelectedTiny] = useState<TinyOpt | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [submitErr, setSubmitErr] = useState<string | null>(null)
+
+  const [showRemoveModal, setShowRemoveModal] = useState(false)
+  const [removeRow, setRemoveRow] = useState<Row | null>(null)
+  const [removeSubmitting, setRemoveSubmitting] = useState(false)
+  const [removeErr, setRemoveErr] = useState<string | null>(null)
 
   const load = useCallback(async () => {
     if (!externo) return
@@ -164,6 +172,51 @@ export default function SupervisorVendedoresPage() {
     }
   }
 
+  const openRemoveModal = (e: React.MouseEvent, v: Row) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setRemoveRow(v)
+    setRemoveErr(null)
+    setShowRemoveModal(true)
+  }
+
+  const closeRemoveModal = () => {
+    if (removeSubmitting) return
+    setShowRemoveModal(false)
+    setRemoveRow(null)
+    setRemoveErr(null)
+  }
+
+  const confirmRemoveFromCarteira = async () => {
+    const ext = removeRow?.id_vendedor_externo?.trim()
+    if (!ext) return
+    setRemoveSubmitting(true)
+    setRemoveErr(null)
+    try {
+      const res = await fetch(`/api/supervisor/${encodeURIComponent(externo)}/vendedores`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vendedor_externo: ext }),
+      })
+      const json = await res.json()
+      if (!json?.ok) {
+        setRemoveErr(json?.error || 'Não foi possível remover.')
+        return
+      }
+      closeRemoveModal()
+      await load()
+      showNotification({
+        message: 'Representante removido da sua carteira.',
+        variant: 'success',
+        delay: 4500,
+      })
+    } catch {
+      setRemoveErr('Erro de rede ao remover.')
+    } finally {
+      setRemoveSubmitting(false)
+    }
+  }
+
   const data = useMemo(() => rows, [rows])
 
   return (
@@ -192,6 +245,7 @@ export default function SupervisorVendedoresPage() {
                     <th>Telefone</th>
                     <th>Tipo de acesso</th>
                     <th>Nível de acesso</th>
+                    <th style={{ width: 1 }} aria-label="Ações" />
                   </tr>
                 </thead>
                 <tbody>
@@ -210,6 +264,19 @@ export default function SupervisorVendedoresPage() {
                       <td>{v.telefone ?? '-'}</td>
                       <td>{v.tipo_acesso ? (v.tipo_acesso === 'TELEVENDAS' ? 'Televendas' : 'Vendedor') : '-'}</td>
                       <td>{nivelLabel(v.nivel_acesso)}</td>
+                      <td className="text-end" onClick={(e) => e.stopPropagation()}>
+                        {v.id_vendedor_externo ? (
+                          <button
+                            type="button"
+                            className="btn btn-link text-danger p-1"
+                            title="Remover da carteira"
+                            aria-label="Remover representante da carteira"
+                            onClick={(e) => openRemoveModal(e, v)}
+                          >
+                            <IconifyIcon icon="ri:delete-bin-line" className="fs-18" />
+                          </button>
+                        ) : null}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -276,6 +343,34 @@ export default function SupervisorVendedoresPage() {
           </Button>
           <Button variant="primary" onClick={() => void submitVincular()} disabled={submitting || !selectedTiny}>
             {submitting ? 'Salvando…' : 'Adicionar'}
+          </Button>
+        </Modal.Footer>
+      </Modal>
+
+      <Modal show={showRemoveModal} onHide={closeRemoveModal} centered backdrop={removeSubmitting ? 'static' : true}>
+        <Modal.Header closeButton>
+          <Modal.Title>Remover da carteira</Modal.Title>
+        </Modal.Header>
+        <Modal.Body>
+          <p className="mb-0">
+            O representante <strong>{removeRow?.nome ?? '—'}</strong> sairá da sua carteira de representantes. O cadastro
+            permanece no sistema. Para excluir em definitivo, procure a administração.
+          </p>
+          {removeErr && <div className="alert alert-danger py-2 small mt-3 mb-0">{removeErr}</div>}
+        </Modal.Body>
+        <Modal.Footer className="d-flex justify-content-between w-100">
+          <Button variant="secondary" onClick={closeRemoveModal} disabled={removeSubmitting}>
+            Cancelar
+          </Button>
+          <Button variant="danger" onClick={() => void confirmRemoveFromCarteira()} disabled={removeSubmitting}>
+            {removeSubmitting ? (
+              <>
+                <Spinner animation="border" size="sm" className="me-2" />
+                Removendo…
+              </>
+            ) : (
+              'Remover'
+            )}
           </Button>
         </Modal.Footer>
       </Modal>

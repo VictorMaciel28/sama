@@ -8,6 +8,22 @@ import IconifyIcon from '@/components/wrappers/IconifyIcon'
 import { savePedido as savePedidoRemote } from '@/services/pedidos2'
  import { useRouter } from 'next/navigation'
  import { useNotificationContext } from '@/context/useNotificationContext'
+import useSWR from 'swr'
+
+type PedidosListaApiResponse = {
+  ok: boolean
+  data: Pedido[]
+  paginacao?: { total?: number; total_valor?: number }
+}
+
+async function fetchPedidosLista(url: string): Promise<PedidosListaApiResponse> {
+  const res = await fetch(url)
+  const json = (await res.json().catch(() => null)) as Partial<PedidosListaApiResponse> | null
+  if (!res.ok || !json?.ok) {
+    throw new Error((typeof json?.error === 'string' && json.error) || 'Falha ao listar pedidos')
+  }
+  return json as PedidosListaApiResponse
+}
  
  interface PedidosListaProps {
    entity?: 'pedido' | 'proposta'
@@ -45,7 +61,7 @@ type SyncModalState =
  }: PedidosListaProps) {
    const router = useRouter()
    const { showNotification } = useNotificationContext()
-   const [items, setItems] = useState<Pedido[]>([])
+   const [itemsProposta, setItemsProposta] = useState<Pedido[]>([])
   const [shareModalVisible, setShareModalVisible] = useState(false)
   const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null)
   const [shareEmailInput, setShareEmailInput] = useState('')
@@ -58,7 +74,7 @@ type SyncModalState =
 
   const loadItems = async () => {
     const rows = await fetchFn()
-    setItems(rows)
+    setItemsProposta(rows)
   }
  
    useEffect(() => {
@@ -77,8 +93,6 @@ type SyncModalState =
   const [itensPorPagina, setItensPorPagina] = useState(20)
   const [sortBy, setSortBy] = useState<'numero' | 'data' | 'cliente'>('numero')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc')
-  const [totalPedidos, setTotalPedidos] = useState(0)
-  const [totalValorFiltrado, setTotalValorFiltrado] = useState(0)
   const [isAdmin, setIsAdmin] = useState(false)
   const [isSupervisor, setIsSupervisor] = useState(false)
   const [meVendedorExterno, setMeVendedorExterno] = useState('')
@@ -229,6 +243,53 @@ type SyncModalState =
     })()
     return () => controller.abort()
   }, [entity, isAdmin, isSupervisor, meVendedorExterno, meVendedorNome])
+
+  const pedidosListaUrl = useMemo(() => {
+    if (entity !== 'pedido') return null
+    const qs = new URLSearchParams()
+    qs.set('limit', String(itensPorPagina))
+    qs.set('offset', String((paginaAtual - 1) * itensPorPagina))
+    if (termoBuscaDebounced.trim()) qs.set('search', termoBuscaDebounced.trim())
+    if (statusFiltro) qs.set('status', statusFiltro)
+    if (vendedorFiltro) qs.set('vendedor', vendedorFiltro)
+    if (dataInicio) qs.set('dataInicio', dataInicio)
+    if (dataFim) qs.set('dataFim', dataFim)
+    qs.set('sortBy', sortBy)
+    qs.set('sortDir', sortDir)
+    return `/api/pedidos?${qs.toString()}`
+  }, [
+    entity,
+    paginaAtual,
+    itensPorPagina,
+    termoBuscaDebounced,
+    statusFiltro,
+    vendedorFiltro,
+    dataInicio,
+    dataFim,
+    sortBy,
+    sortDir,
+  ])
+
+  const {
+    data: pedidosListaData,
+    error: pedidosListaError,
+    isValidating: pedidosListaValidating,
+    mutate: mutatePedidosLista,
+  } = useSWR(entity === 'pedido' ? pedidosListaUrl : null, fetchPedidosLista, {
+    revalidateOnFocus: true,
+    dedupingInterval: 3000,
+  })
+
+  useEffect(() => {
+    if (entity !== 'pedido' || !pedidosListaError) return
+    console.error('Erro ao listar pedidos paginados', pedidosListaError)
+  }, [entity, pedidosListaError])
+
+  const totalPedidosApi = entity === 'pedido' ? Number(pedidosListaData?.paginacao?.total ?? 0) : 0
+  const totalValorFiltradoApi = entity === 'pedido' ? Number(pedidosListaData?.paginacao?.total_valor ?? 0) : 0
+
+  const listaItens: Pedido[] =
+    entity === 'pedido' ? (pedidosListaData?.data ?? []) : itemsProposta
  
    const dentroDoPeriodo = (dataISO: string) => {
      if (!dataInicio && !dataFim) return true;
@@ -245,7 +306,7 @@ type SyncModalState =
      return true;
    };
  
-  const itensFiltrados = items.filter((p) => {
+  const itensFiltrados = listaItens.filter((p) => {
      const termo = termoBusca.trim().toLowerCase();
      const atendeBusca = !termo
        || String(p.numero).includes(termo)
@@ -264,14 +325,14 @@ type SyncModalState =
     return sortDir === 'asc' ? cmp : -cmp
   })
 
-  const totalBase = entity === 'pedido' ? totalPedidos : itensOrdenados.length
+  const totalBase = entity === 'pedido' ? totalPedidosApi : itensOrdenados.length
   const totalPaginas = Math.max(1, Math.ceil(totalBase / itensPorPagina))
   const totalValorExibido = useMemo(
     () =>
       entity === 'pedido' && !isAdmin
         ? itensOrdenados.reduce((acc, p) => acc + (p.total || 0), 0)
-        : totalValorFiltrado,
-    [entity, isAdmin, itensOrdenados, totalValorFiltrado],
+        : totalValorFiltradoApi,
+    [entity, isAdmin, itensOrdenados, totalValorFiltradoApi],
   )
   const paginaSegura = Math.min(paginaAtual, totalPaginas)
   const inicio = (paginaSegura - 1) * itensPorPagina
@@ -351,13 +412,17 @@ type SyncModalState =
       })
       const json = await res.json().catch(() => null)
       if (!res.ok || !json?.ok) {
-        throw new Error(json?.error || 'Falha ao enviar o email')
+        const detail = [json?.error, json?.userHint].filter(Boolean).join(' — ')
+        throw new Error(detail || 'Falha ao enviar o email')
       }
       closeShareModal()
+      const follow = json?.warning
+        ? ` ${String(json.warning)}`
+        : ' Se não localizar, confira a caixa de spam.'
       showNotification({
-        message: `Pedido #${targetNumero} enviado para ${recipient}`,
-        variant: 'success',
-        delay: 4500,
+        message: `Pedido nº ${targetNumero} encaminhado para ${recipient}.${follow}`,
+        variant: json?.warning ? 'warning' : 'success',
+        delay: json?.warning ? 8000 : 5000,
       })
     } catch (err: any) {
       setShareModalError(err?.message || 'Falha ao enviar o email')
@@ -385,7 +450,7 @@ type SyncModalState =
         const res = await fetch(`/api/propostas?id=${numero}`, { method: 'DELETE' })
         const json = await res.json()
         if (!res.ok || !json?.ok) throw new Error(json?.error || 'Falha ao deletar proposta')
-        setItems((arr) => arr.filter((it) => it.numero !== numero))
+        setItemsProposta((arr) => arr.filter((it) => it.numero !== numero))
         showNotification({
           message: `Proposta #${numero} removida.`,
           variant: 'success',
@@ -399,11 +464,7 @@ type SyncModalState =
         })
         const json = await res.json().catch(() => null)
         if (!res.ok || !json?.ok) throw new Error(json?.error || 'Falha ao cancelar pedido')
-        setItems((arr) =>
-          arr.map((it) =>
-            it.numero === numero ? { ...it, status: 'Cancelado' as PedidoStatus } : it
-          )
-        )
+        await mutatePedidosLista()
         const tinyErr = json?.tinyError ? String(json.tinyError) : ''
         if (tinyErr) {
           showNotification({
@@ -452,7 +513,7 @@ type SyncModalState =
       const res = await savePedidoRemote({ ...evolveItem, status: 'Pendente' })
       // Only remove the proposal from the list if backend returned a platform numero (pedido created)
       if (res && (res as any).numero) {
-        setItems((arr) => arr.filter((it) => it.numero !== evolveItem.numero))
+        setItemsProposta((arr) => arr.filter((it) => it.numero !== evolveItem.numero))
         setShowEvolveModal(false)
       } else {
         // Do not remove; surface error to user for inspection
@@ -492,7 +553,7 @@ type SyncModalState =
         setSyncModal({ mode: 'result', data: { ok: false, error: json?.error || 'Falha ao sincronizar pedidos' } })
         return
       }
-      await loadItems()
+      await mutatePedidosLista()
       const unmatched = Array.isArray(json?.unmatchedClienteNomes) ? (json.unmatchedClienteNomes as string[]) : []
       if (unmatched.length > 0) {
         setSyncModal({ mode: 'import_confirm', data: json as Record<string, unknown>, unmatched })
@@ -524,40 +585,11 @@ type SyncModalState =
         return
       }
       setSyncModal({ mode: 'import_done', data: json as Record<string, unknown> })
-      await loadItems()
+      await mutatePedidosLista()
     } catch (err: any) {
       setSyncModal({ mode: 'import_done', data: { ok: false, error: err?.message || String(err) } })
     }
   }
-
-  useEffect(() => {
-    if (entity !== 'pedido') return
-    const controller = new AbortController()
-    ;(async () => {
-      try {
-        const qs = new URLSearchParams()
-        qs.set('limit', String(itensPorPagina))
-        qs.set('offset', String((paginaSegura - 1) * itensPorPagina))
-        if (termoBuscaDebounced.trim()) qs.set('search', termoBuscaDebounced.trim())
-        if (statusFiltro) qs.set('status', statusFiltro)
-        if (vendedorFiltro) qs.set('vendedor', vendedorFiltro)
-        if (dataInicio) qs.set('dataInicio', dataInicio)
-        if (dataFim) qs.set('dataFim', dataFim)
-        qs.set('sortBy', sortBy)
-        qs.set('sortDir', sortDir)
-        const res = await fetch(`/api/pedidos?${qs.toString()}`, { signal: controller.signal })
-        const json = await res.json().catch(() => null)
-        if (!res.ok || !json?.ok) throw new Error(json?.error || 'Falha ao listar pedidos')
-        setItems(Array.isArray(json?.data) ? json.data : [])
-        setTotalPedidos(Number(json?.paginacao?.total || 0))
-        setTotalValorFiltrado(Number(json?.paginacao?.total_valor || 0))
-      } catch (e: any) {
-        if (e?.name === 'AbortError') return
-        console.error('Erro ao listar pedidos paginados', e)
-      }
-    })()
-    return () => controller.abort()
-  }, [entity, paginaSegura, itensPorPagina, termoBuscaDebounced, statusFiltro, vendedorFiltro, dataInicio, dataFim, sortBy, sortDir])
 
   const toggleSort = (field: 'numero' | 'data' | 'cliente') => {
     if (sortBy === field) {
@@ -735,7 +767,10 @@ type SyncModalState =
        </section>
  
       <section className="pedidos-lista pt-0 pb-3">
-         <Card className="border-0 shadow-sm">
+         <Card
+           className={`border-0 shadow-sm${entity === 'pedido' && pedidosListaValidating && pedidosListaData ? ' opacity-75' : ''}`}
+           style={entity === 'pedido' && pedidosListaValidating && pedidosListaData ? { transition: 'opacity 0.15s ease' } : undefined}
+         >
            <Card.Body>
              <div className="table-responsive">
                <Table hover className="mb-0">
