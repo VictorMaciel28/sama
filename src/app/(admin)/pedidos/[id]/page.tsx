@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import PageTitle from '@/components/PageTitle'
 import { Card, Row, Col, Form, Button, Table, Modal, Spinner, OverlayTrigger, Tooltip } from 'react-bootstrap'
 import { getPedidoByNumero, Pedido, PedidoStatus, getNextPedidoNumero, savePedido as savePedidoRemote } from '@/services/pedidos2'
-import { createProposta } from '@/services/propostas'
+import { createProposta, updateProposta } from '@/services/propostas'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
 import {
   formatPaymentConditionSelectValue,
@@ -1007,7 +1007,17 @@ export default function PedidoFormPage() {
           endereco_diferente: isDifferentDeliveryAddress,
         }
         payloadProposal.juros_ligado = true
-        const numero = await createProposta(payloadProposal as any)
+        if (isNew) {
+          await createProposta(payloadProposal as any)
+        } else {
+          const n = Number(form.numero || 0)
+          if (!n) {
+            setSubmitError('Número da proposta inválido')
+            setIsSubmitting(false)
+            return
+          }
+          await updateProposta(n, payloadProposal as any)
+        }
         router.push('/propostas')
         return
       }
@@ -1955,12 +1965,16 @@ export default function PedidoFormPage() {
               <Button variant="secondary" onClick={() => router.push(entityParam === 'proposta' ? '/propostas' : '/pedidos')}>
                 Cancelar
               </Button>
-              {(isAdminUser || isNew) && (
+              {(entityParam === 'proposta' || isAdminUser || isNew) && (
                 <Button
                   type="submit"
                   disabled={!!pagamentoParceladoErro || isSubmitting}
                 >
-                  {entityParam === 'proposta' ? 'Enviar Proposta' : 'Enviar Pedido'}
+                  {entityParam === 'proposta'
+                    ? isNew
+                      ? 'Enviar Proposta'
+                      : 'Salvar alterações'
+                    : 'Enviar Pedido'}
                 </Button>
               )}
             </div>

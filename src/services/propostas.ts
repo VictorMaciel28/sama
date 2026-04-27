@@ -34,5 +34,21 @@ export async function createProposta(input: Partial<Pedido> & { id?: number; id_
   })
   const json = await res.json()
   if (!res.ok || !json?.ok) throw new Error(json?.error || 'Falha ao salvar proposta')
+  propostasCache = null
   return json.numero
+}
+
+export async function updateProposta(
+  numero: number,
+  input: Partial<Pedido> & { id?: number; id_vendedor_externo?: string | null; client_vendor_externo?: string | null }
+) {
+  const res = await fetch(`/api/propostas/${numero}`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(input),
+  })
+  const json = await res.json()
+  if (!res.ok || !json?.ok) throw new Error(json?.error || 'Falha ao atualizar proposta')
+  propostasCache = null
+  return json.numero as number
 }
