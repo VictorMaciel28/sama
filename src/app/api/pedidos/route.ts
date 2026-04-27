@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
 import { tinyV2Post } from '@/lib/tinyOAuth'
+import { formatSqlDateOnly, parseYmdToSqlDate, todayCalendarYmdUtc } from '@/lib/calendarDate'
 
 function formatBrDate(iso: string) {
   const s = String(iso || '').slice(0, 10)
@@ -200,7 +201,7 @@ export async function GET(req: Request) {
       const cnpj = cnpjStored || cnpjFromCliente
       return {
         numero: r.numero,
-        data: r.data.toISOString().slice(0, 10),
+        data: formatSqlDateOnly(r.data),
         cliente: r.cliente,
         cnpj,
         sistema_origem: String(r.sistema_origem || 'sama').toLowerCase(),
@@ -530,7 +531,7 @@ export async function POST(req: Request) {
         // Build record payload
         const baseOrderData: any = {
           numero: platformNumero,
-          data: dataStr ? new Date(dataStr) : new Date(),
+          data: dataStr ? parseYmdToSqlDate(dataStr) : parseYmdToSqlDate(todayCalendarYmdUtc()),
           cliente: String((rawCliente?.nome as string) ?? (body?.cliente || '')).toString(),
           cnpj: String((rawCliente?.cpf_cnpj as string) ?? (body?.cnpj || '')).toString(),
           total: total,

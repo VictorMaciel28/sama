@@ -17,22 +17,16 @@ function formatCurrency(value: number) {
   return Number(value || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
 }
 
-function formatDate(value: Date | string) {
-  try {
-    const date = typeof value === 'string' ? new Date(value) : value
-    return date.toLocaleDateString('pt-BR')
-  } catch {
-    return ''
-  }
-}
-
 function getFinalY(doc: jsPDF, fallback: number): number {
   const t = doc as jsPDF & { lastAutoTable?: { finalY: number } }
   return t.lastAutoTable?.finalY ?? fallback
 }
 
-/** PDF em memória (Buffer), sem Puppeteer — mesmo conteúdo base do email HTML. Valores líquidos de produto/qtd × preço e total do pedido (sem discriminação de impostos). */
+/** PDF em memória (Buffer) — estrutura tipo ordem de compra: itens, total, parcelas, endereço, status. */
 export function renderPlatformOrderPdfBuffer(order: ShareDocumentPayload): Buffer {
+  const isProposta = order.documentKind === 'proposta'
+  const docTitulo = isProposta ? 'Proposta' : 'Pedido'
+
   const doc = new jsPDF({ unit: 'pt', format: 'a4' })
   const pageW = doc.internal.pageSize.getWidth()
   const margin = 40
@@ -40,18 +34,18 @@ export function renderPlatformOrderPdfBuffer(order: ShareDocumentPayload): Buffe
 
   doc.setFontSize(18)
   doc.setFont('helvetica', 'bold')
-  doc.text(`Pedido nº ${order.numero}`, margin, y)
+  doc.text(`${docTitulo} nº ${order.numero}`, margin, y)
   y += 22
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(10)
   doc.setTextColor(107, 114, 128)
-  doc.text(`Emitido em ${formatDate(order.data)}`, margin, y)
+  doc.text(`Emitido em ${order.emitido_em_label}`, margin, y)
   doc.setTextColor(0, 0, 0)
   y += 18
 
   const meta: string[] = []
   if (order.sistema_origem) meta.push(`Origem: ${String(order.sistema_origem).toUpperCase()}`)
-  if (order.tiny_id) meta.push(`Pedido Tiny: ${order.tiny_id}`)
+  if (order.tiny_id) meta.push(`Número do pedido: ${order.tiny_id}`)
   if (order.nf_referencia) meta.push(`Ref. NF: ${order.nf_referencia}`)
   if (meta.length) {
     doc.setFontSize(9)
@@ -76,49 +70,7 @@ export function renderPlatformOrderPdfBuffer(order: ShareDocumentPayload): Buffe
   doc.text(String(order.cnpj || ''), margin, y)
   y += 12
   doc.text(`Vendedor: ${order.vendedor_label}`, margin, y)
-  y += 20
-
-  doc.setFont('helvetica', 'bold')
-  doc.text('Status', margin, y)
-  y += 14
-  doc.setFont('helvetica', 'normal')
-  doc.text(statusLabel, margin, y)
-  y += 12
-  doc.text(`Forma de recebimento: ${order.forma_recebimento || '—'}`, margin, y)
-  y += 12
-  doc.text(`Condição de pagamento: ${order.condicao_pagamento || '—'}`, margin, y)
-  y += 20
-
-  const delivery = (order.endereco_entrega || {}) as Record<string, unknown>
-  const addressLines = [
-    delivery.endereco,
-    delivery.numero,
-    delivery.complemento,
-    delivery.bairro,
-    delivery.cidade,
-    delivery.uf,
-    delivery.cep,
-  ]
-    .filter((x) => x != null && String(x).trim() !== '')
-    .map((x) => String(x))
-    .join(' · ')
-
-  doc.setFont('helvetica', 'bold')
-  doc.text('Endereço de entrega', margin, y)
-  y += 14
-  doc.setFont('helvetica', 'normal')
-  const addrWrapped = doc.splitTextToSize(addressLines || 'Não informado', pageW - 2 * margin)
-  doc.text(addrWrapped, margin, y)
-  y += addrWrapped.length * 12 + 8
-
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(12)
-  doc.text('Total do pedido', margin, y)
-  y += 18
-  doc.setFontSize(18)
-  doc.text(formatCurrency(Number(order.total) || 0), margin, y)
-  doc.setFontSize(10)
-  y += 28
+  y += 22
 
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(12)
@@ -149,19 +101,62 @@ export function renderPlatformOrderPdfBuffer(order: ShareDocumentPayload): Buffe
     margin: { left: margin, right: margin },
   })
 
-  const finalY = getFinalY(doc, y) + 14
+  y = getFinalY(doc, y) + 18
+
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(12)
+  doc.text(
+    `${isProposta ? 'Total da proposta' : 'Total do pedido'}: ${formatCurrency(Number(order.total) || 0)}`,
+    pageW - margin,
+    y,
+    { align: 'right' }
+  )
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  y += 28
+
+  const parcelas = Array.isArray(order.parcelas_resumo) ? order.parcelas_resumo : []
+  if (parcelas.length > 0) {
+    doc.setFont('helvetica', 'bold')
+    doc.setFontSize(11)
+    doc.text('Parcelas', margin, y)
+    y += 10
+    const pBody = parcelas.map((p) => [String(p.numero), p.vencimento, formatCurrency(p.valor)])
+    autoTable(doc, {
+      startY: y,
+      head: [['Nº', 'Vencimento', 'Valor']],
+      body: pBody,
+      styles: { fontSize: 9, cellPadding: 6 },
+      headStyles: { fillColor: [15, 23, 42], textColor: 255 },
+      columnStyles: {
+        0: { cellWidth: 28, halign: 'center' },
+        1: { cellWidth: 90 },
+        2: { halign: 'right' },
+      },
+      margin: { left: margin, right: margin },
+    })
+    y = getFinalY(doc, y) + 20
+  }
+
+  const addrTitle = order.endereco_do_cliente ? 'Endereço (cadastro do cliente)' : 'Endereço de entrega'
+  doc.setFont('helvetica', 'bold')
+  doc.setFontSize(11)
+  doc.text(addrTitle, margin, y)
+  y += 14
+  doc.setFont('helvetica', 'normal')
+  doc.setFontSize(10)
+  const addrWrapped = doc.splitTextToSize(order.endereco_exibicao || 'Não informado', pageW - 2 * margin)
+  doc.text(addrWrapped, margin, y)
+  y += addrWrapped.length * 12 + 16
+
+  doc.setFont('helvetica', 'normal')
+  doc.text(statusLabel, margin, y)
+  y += 20
+
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(8)
   doc.setTextColor(120, 120, 120)
-  doc.text(
-    'Totais conforme cadastro do pedido na plataforma (sem discriminação de impostos por item).',
-    margin,
-    finalY
-  )
-  doc.setTextColor(0, 0, 0)
-  doc.setFont('helvetica', 'bold')
-  doc.setFontSize(11)
-  doc.text(`Total: ${formatCurrency(Number(order.total) || 0)}`, pageW - margin, finalY + 18, { align: 'right' })
+   doc.setTextColor(0, 0, 0)
 
   return Buffer.from(doc.output('arraybuffer'))
 }

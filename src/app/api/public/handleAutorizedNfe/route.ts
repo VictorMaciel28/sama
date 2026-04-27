@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import nodemailer from 'nodemailer'
 import { prisma } from '@/lib/prisma'
 import { PAYMENT_EMITER_ALIANCA, persistTinyNotaFiscalOnPayment } from '@/lib/tinyNotaFiscalPayment'
+import { getInternalSmtpConfig } from '@/lib/internalSmtp'
 
 export const runtime = 'nodejs'
 
@@ -260,21 +261,17 @@ export async function POST(req: NextRequest) {
 
   // send email notification
   try {
-    const smtpHost = process.env.SMTP_HOST || 'br590.hostgator.com.br'
-    const smtpPort = Number(process.env.SMTP_PORT || '587')
-    const smtpUser = process.env.SMTP_USER || 'sama@aliancamercantil.com'
-    const smtpPass = process.env.SMTP_PASS || 'sama@aliancamercantil.com'
-    const from = process.env.EMAIL_FROM || smtpUser
+    const { host, port, user, pass, from } = getInternalSmtpConfig()
     const clientEmail = nota?.cliente?.email?.trim()
     const toEmail = clientEmail || (process.env.NOTIFY_EMAIL ?? '')
 
     const transporter = nodemailer.createTransport({
-      host: smtpHost,
-      port: smtpPort,
-      secure: smtpPort === 465, // true for 465, false for other ports
+      host,
+      port,
+      secure: port === 465, // true for 465, false for other ports
       auth: {
-        user: smtpUser,
-        pass: smtpPass,
+        user,
+        pass,
       },
       tls: {
         rejectUnauthorized: false,

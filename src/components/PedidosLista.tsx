@@ -5,7 +5,7 @@ import { Card, Form, Table, Badge, Row, Col, Button, Modal, Spinner } from "reac
  import PageTitle from '@/components/PageTitle'
 import { Pedido, PedidoStatus } from '@/services/pedidos2'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
-import { savePedido as savePedidoRemote } from '@/services/pedidos2'
+import { savePedido as savePedidoRemote, getPedidoByNumero } from '@/services/pedidos2'
  import { useRouter } from 'next/navigation'
  import { useNotificationContext } from '@/context/useNotificationContext'
 import useSWR from 'swr'
@@ -34,14 +34,6 @@ async function fetchPedidosLista(url: string): Promise<PedidosListaApiResponse> 
    itemRouteBase?: string
  }
  
-type ShareTarget = {
-  numero: number
-  cliente: string
-  total: number
-  status: PedidoStatus
-  email: string | null
-}
-
 type SyncModalState =
   | null
   | { mode: 'confirm' }
@@ -62,12 +54,7 @@ type SyncModalState =
    const router = useRouter()
    const { showNotification } = useNotificationContext()
    const [itemsProposta, setItemsProposta] = useState<Pedido[]>([])
-  const [shareModalVisible, setShareModalVisible] = useState(false)
-  const [shareTarget, setShareTarget] = useState<ShareTarget | null>(null)
-  const [shareEmailInput, setShareEmailInput] = useState('')
-  const [shareLoadingPedidoNumero, setShareLoadingPedidoNumero] = useState<number | null>(null)
-  const [shareSending, setShareSending] = useState(false)
-  const [shareModalError, setShareModalError] = useState<string | null>(null)
+  const [pdfLoadingPedidoNumero, setPdfLoadingPedidoNumero] = useState<number | null>(null)
   const [syncModal, setSyncModal] = useState<SyncModalState>(null)
   const [deleteModal, setDeleteModal] = useState<{ mode: 'pedido' | 'proposta'; numero: number } | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
@@ -355,79 +342,39 @@ type SyncModalState =
     return `${itemRouteBase}/${numero}`
   }
 
-  const closeShareModal = () => {
-    setShareModalVisible(false)
-    setShareTarget(null)
-    setShareEmailInput('')
-    setShareModalError(null)
-  }
-
-  const openShareModal = async (e: React.MouseEvent, pedidoNumero: number) => {
+  const handleDownloadPedidoPdf = async (e: React.MouseEvent, numero: number) => {
     e.stopPropagation()
-    setShareModalError(null)
-    setShareLoadingPedidoNumero(pedidoNumero)
+    setPdfLoadingPedidoNumero(numero)
     try {
-      const res = await fetch(`/api/pedidos/${pedidoNumero}`)
-      const json = await res.json().catch(() => null)
-      if (!res.ok || !json?.ok) {
-        throw new Error(json?.error || 'Falha ao carregar o pedido')
+      const qs = entity === 'proposta' ? '?entity=proposta' : ''
+      const res = await fetch(`/api/pedidos/${numero}/pdf${qs}`)
+      if (!res.ok) {
+        const json = await res.json().catch(() => null)
+        throw new Error((json && typeof json?.error === 'string' && json.error) || 'Falha ao gerar o PDF')
       }
-      const data = json.data
-      const defaultEmail = data?.selected_client?.email || ''
-      setShareTarget({
-        numero: data.numero,
-        cliente: data.cliente,
-        total: Number(data.total || 0),
-        status: data.status,
-        email: defaultEmail || null,
-      })
-      setShareEmailInput(defaultEmail || '')
-      setShareModalVisible(true)
-    } catch (err: any) {
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = entity === 'proposta' ? `proposta-${numero}.pdf` : `pedido-${numero}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
       showNotification({
-        message: err?.message || 'Não foi possível abrir o compartilhamento',
+        message: `PDF do ${entity === 'proposta' ? 'proposta' : 'pedido'} #${numero} baixado.`,
+        variant: 'success',
+        delay: 4500,
+      })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Não foi possível baixar o PDF'
+      showNotification({
+        message: msg,
         variant: 'danger',
-        delay: 6000,
+        delay: 7000,
       })
     } finally {
-      setShareLoadingPedidoNumero(null)
-    }
-  }
-
-  const handleShareSend = async () => {
-    if (!shareTarget) return
-    const recipient = shareEmailInput.trim()
-    if (!recipient) {
-      setShareModalError('Email obrigatório')
-      return
-    }
-    setShareModalError(null)
-    setShareSending(true)
-    const targetNumero = shareTarget.numero
-    try {
-      const res = await fetch('/api/pedidos/share', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ numero: shareTarget.numero, email: recipient }),
-      })
-      const json = await res.json().catch(() => null)
-      if (!res.ok || !json?.ok) {
-        const detail = [json?.error, json?.userHint].filter(Boolean).join(' — ')
-        throw new Error(detail || 'Falha ao enviar o email')
-      }
-      closeShareModal()
-      const follow = json?.warning
-        ? ` ${String(json.warning)}`
-        : ' Se não localizar, confira a caixa de spam.'
-      showNotification({
-        message: `Pedido nº ${targetNumero} encaminhado para ${recipient}.${follow}`,
-        variant: json?.warning ? 'warning' : 'success',
-        delay: json?.warning ? 8000 : 5000,
-      })
-    } catch (err: any) {
-      setShareModalError(err?.message || 'Falha ao enviar o email')
-    } finally {
-      setShareSending(false)
+      setPdfLoadingPedidoNumero(null)
     }
   }
 
@@ -510,7 +457,15 @@ type SyncModalState =
     setIsEvolving(true)
     setEvolveError(null)
     try {
-      const res = await savePedidoRemote({ ...evolveItem, status: 'Pendente' })
+      const full = await getPedidoByNumero(evolveItem.numero)
+      const res = await savePedidoRemote({
+        ...(full || {}),
+        ...evolveItem,
+        forma_recebimento: full?.forma_recebimento ?? evolveItem.forma_recebimento,
+        condicao_pagamento: full?.condicao_pagamento ?? evolveItem.condicao_pagamento,
+        juros_ligado: full?.juros_ligado ?? evolveItem.juros_ligado ?? true,
+        status: 'Pendente',
+      })
       // Only remove the proposal from the list if backend returned a platform numero (pedido created)
       if (res && (res as any).numero) {
         setItemsProposta((arr) => arr.filter((it) => it.numero !== evolveItem.numero))
@@ -851,16 +806,20 @@ type SyncModalState =
                                    </Button>
                                 )}
                                 <Button
-                                  variant="outline-info"
+                                  variant="outline-secondary"
                                   size="sm"
-                                  disabled={shareLoadingPedidoNumero === p.numero}
-                                  onClick={(e) => openShareModal(e, p.numero)}
-                                  title="Compartilhar"
+                                  disabled={pdfLoadingPedidoNumero === p.numero}
+                                  onClick={(e) => handleDownloadPedidoPdf(e, p.numero)}
+                                  title={
+                                    entity === 'proposta'
+                                      ? 'Baixar PDF da proposta (ordem de compra)'
+                                      : 'Baixar PDF do pedido (ordem de compra)'
+                                  }
                                 >
-                                  {shareLoadingPedidoNumero === p.numero ? (
+                                  {pdfLoadingPedidoNumero === p.numero ? (
                                     <Spinner animation="border" size="sm" />
                                   ) : (
-                                    <IconifyIcon icon="ri:share-forward-line" />
+                                    <IconifyIcon icon="ri:printer-line" />
                                   )}
                                 </Button>
                                  {entity === 'proposta' && (
@@ -912,57 +871,6 @@ type SyncModalState =
            </Card.Body>
          </Card>
        </section>
-
-      <Modal show={shareModalVisible} onHide={closeShareModal} centered>
-        <Modal.Header closeButton>
-          <Modal.Title>Compartilhar pedido</Modal.Title>
-        </Modal.Header>
-        <Modal.Body>
-          {shareTarget && (
-            <>
-              <p className="mb-1">
-                Enviar pedido <strong>#{shareTarget.numero}</strong> — {shareTarget.cliente}
-              </p>
-              <div className="small text-muted mb-3">
-                Total:{' '}
-                <strong>
-                  {shareTarget.total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                </strong>
-              </div>
-              <Form.Group className="mb-3">
-                <Form.Label>Email do destinatário</Form.Label>
-                <Form.Control
-                  type="email"
-                  value={shareEmailInput}
-                  onChange={(e) => setShareEmailInput(e.target.value)}
-                  placeholder="cliente@empresa.com"
-                />
-              </Form.Group>
-              {shareModalError && <div className="alert alert-danger">{shareModalError}</div>}
-              <div className="small text-muted">Será enviado um PDF com os detalhes do pedido.</div>
-            </>
-          )}
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={closeShareModal} disabled={shareSending}>
-            Cancelar
-          </Button>
-          <Button
-            variant="primary"
-            onClick={handleShareSend}
-            disabled={shareSending || !shareEmailInput.trim()}
-          >
-            {shareSending ? (
-              <>
-                <Spinner animation="border" size="sm" className="me-2" />
-                Enviando...
-              </>
-            ) : (
-              'Enviar por email'
-            )}
-          </Button>
-        </Modal.Footer>
-      </Modal>
 
       <Modal
         show={syncModal != null}

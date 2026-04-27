@@ -2,6 +2,41 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
+import { formatSqlDateOnly, parseYmdToSqlDate, todayCalendarYmdUtc } from '@/lib/calendarDate'
+
+function pickStr(body: Record<string, unknown>, key: string, maxLen: number): string | null {
+  const v = body[key]
+  if (v == null) return null
+  const s = String(v).trim().slice(0, maxLen)
+  return s === '' ? null : s
+}
+
+/** Mesmos nomes do POST /api/pedidos e payloads espelhados (pagamento.*). */
+function resolveFormaRecebimento(body: Record<string, unknown>): string | null {
+  const direct = pickStr(body, 'forma_recebimento', 50) ?? pickStr(body, 'formaPagamento', 50)
+  if (direct) return direct
+  const pag = body.pagamento as Record<string, unknown> | undefined
+  const nested = pag?.formaRecebimento
+  if (nested && typeof nested === 'object' && nested !== null && 'nome' in nested) {
+    const s = String((nested as { nome?: unknown }).nome ?? '').trim().slice(0, 50)
+    if (s) return s
+  }
+  return null
+}
+
+function resolveCondicaoPagamento(body: Record<string, unknown>): string | null {
+  const direct =
+    pickStr(body, 'condicao_pagamento', 100) ??
+    pickStr(body, 'condicaoPagamento', 100) ??
+    pickStr(body, 'condicao', 100)
+  if (direct) return direct
+  const pag = body.pagamento as Record<string, unknown> | undefined
+  if (pag?.condicao_pagamento != null) {
+    const s = String(pag.condicao_pagamento).trim().slice(0, 100)
+    if (s) return s
+  }
+  return null
+}
 
 export async function GET() {
   try {
@@ -42,11 +77,14 @@ export async function GET() {
           : []
         return {
           numero: r.numero,
-          data: r.data.toISOString().slice(0, 10),
+          data: formatSqlDateOnly(r.data),
           cliente: r.cliente,
           cnpj: r.cnpj,
           total: Number(r.total),
           status: 'Proposta',
+          forma_recebimento: r.forma_recebimento ?? null,
+          condicao_pagamento: r.condicao_pagamento ?? null,
+          juros_ligado: Boolean(r.juros_ligado ?? true),
           id_vendedor_externo: r.id_vendedor_externo,
           /** Necessário ao evoluir proposta → pedido (Tiny exige idContato). */
           id_client_externo: r.id_client_externo != null ? r.id_client_externo.toString() : null,
@@ -81,7 +119,7 @@ export async function POST(req: Request) {
     }
     if (!vendedorExternoFromSession) return NextResponse.json({ ok: false, error: 'Usuário não é vendedor autenticado' }, { status: 401 })
 
-    const body = await req.json()
+    const body = (await req.json()) as Record<string, unknown>
     const dataStr = (body?.data || '').toString().slice(0, 10)
     // Accept cliente sent either as string or as an object { nome, cpf_cnpj }.
     let cliente = ''
@@ -94,12 +132,24 @@ export async function POST(req: Request) {
       cnpj = (body?.cnpj || '').toString().trim()
     }
     const total = Number(body?.total || 0)
+    const forma_recebimento = resolveFormaRecebimento(body)
+    const condicao_pagamento = resolveCondicaoPagamento(body)
+    const juros_ligado =
+      body?.juros_ligado === false ||
+      body?.juros_ligado === 'false' ||
+      body?.juros_ligado === 0 ||
+      body?.juros_ligado === '0'
+        ? false
+        : true
+
     const id_vendedor_externo =
-      body?.vendedor?.id != null
-        ? body.vendedor.id?.toString?.().trim?.() || null
+      body?.vendedor != null &&
+      typeof body.vendedor === 'object' &&
+      (body.vendedor as { id?: unknown }).id != null
+        ? String((body.vendedor as { id?: unknown }).id).trim() || null
         : body?.id_vendedor_externo != null
-        ? body.id_vendedor_externo?.toString?.().trim?.() || null
-        : vendedorExternoFromSession
+          ? body.id_vendedor_externo?.toString?.().trim?.() || null
+          : vendedorExternoFromSession
     const idClientStr = body?.idContato != null ? body.idContato?.toString?.().trim?.() || '' : ''
     const id_client_externo = /^\d+$/.test(idClientStr) && idClientStr !== '0' ? BigInt(idClientStr) : null
     const client_vendor_externo: string | null =
@@ -122,11 +172,14 @@ export async function POST(req: Request) {
       data: {
         numero: nextNumero,
         tiny_id: nextNumero,
-        data: dataStr ? new Date(dataStr) : new Date(),
+        data: dataStr ? parseYmdToSqlDate(dataStr) : parseYmdToSqlDate(todayCalendarYmdUtc()),
         cliente,
         cnpj,
         total,
         status: 'PROPOSTA' as any,
+        forma_recebimento,
+        condicao_pagamento,
+        juros_ligado,
         id_vendedor_externo: id_vendedor_externo,
         id_client_externo: id_client_externo,
         client_vendor_externo: client_vendor_externo,

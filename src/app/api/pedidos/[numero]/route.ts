@@ -4,6 +4,7 @@ import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
 import { tinyV2Post } from '@/lib/tinyOAuth'
 import { upsertClienteFromTinyObterPayload } from '@/lib/tinyObterCliente'
+import { formatSqlDateOnly } from '@/lib/calendarDate'
 
 function toIsoDate(input: unknown) {
   const raw = String(input || '').trim()
@@ -164,7 +165,7 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
 
     const data = {
       numero: row.numero,
-      data: row.data.toISOString().slice(0, 10),
+      data: formatSqlDateOnly(row.data),
       cliente: row.cliente,
       cnpj: row.cnpj,
       sistema_origem: String((row as any).sistema_origem || 'sama').toLowerCase(),

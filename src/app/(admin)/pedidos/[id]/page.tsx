@@ -16,6 +16,11 @@ import {
   PAYMENT_ADMIN_TIER_ORDER,
   type PaymentConditionRow,
 } from '@/lib/paymentConditions'
+import {
+  formatLocalDateYmd,
+  parseYmdToLocalDate,
+  todayCalendarYmdLocal,
+} from '@/lib/calendarDate'
 
 const requestCache = new Map<string, { ts: number; data: any }>()
 const requestInFlight = new Map<string, Promise<any>>()
@@ -53,7 +58,7 @@ export default function PedidoFormPage() {
 
   const [form, setForm] = useState<Pedido>({
     numero: 0,
-    data: new Date().toISOString().slice(0, 10),
+    data: todayCalendarYmdLocal(),
     cliente: '',
     cnpj: '',
     total: 0,
@@ -1001,6 +1006,7 @@ export default function PedidoFormPage() {
           ...deliveryAddress,
           endereco_diferente: isDifferentDeliveryAddress,
         }
+        payloadProposal.juros_ligado = true
         const numero = await createProposta(payloadProposal as any)
         router.push('/propostas')
         return
@@ -1057,13 +1063,13 @@ export default function PedidoFormPage() {
         formaRecebimento: { id: selectedFormaRecebimentoId },
         meioPagamento: { id: 0 },
         parcelas: (parcelas || []).map((p) => {
-          const baseDate = new Date(form.data || new Date().toISOString().slice(0, 10))
+          const baseDate = parseYmdToLocalDate(form.data || todayCalendarYmdLocal())
           const due = new Date(p.data)
           const ms = due.getTime() - baseDate.getTime()
           const dias = Math.max(0, Math.round(ms / (1000 * 60 * 60 * 24)))
           return {
             dias,
-            data: due.toISOString().slice(0, 10),
+            data: formatLocalDateYmd(due),
             valor: Number(p.valor || 0),
             observacoes: '',
             formaRecebimento: { id: selectedFormaRecebimentoId },
@@ -1236,7 +1242,7 @@ export default function PedidoFormPage() {
 
   const parcelas = useMemo(() => {
     if (String(formaRecebimento || '').trim().toLowerCase() !== 'boleto' || diasParcelas.length === 0) return []
-    const baseDate = new Date(form.data || new Date().toISOString().slice(0, 10))
+    const baseDate = parseYmdToLocalDate(form.data || todayCalendarYmdLocal())
     const qtd = diasParcelas.length
     const valorParcela = qtd > 0 ? totalComDesconto / qtd : 0
     return diasParcelas.map((dias, idx) => {
