@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { resolveSupervisorSupervisedList } from '@/lib/supervisorScope'
+import { tinyContatoAlterarIdVendedor } from '@/lib/tinyContatoAlterar'
 
 export async function POST(req: Request, { params }: { params: { externo: string } }) {
   try {
@@ -60,7 +61,18 @@ export async function POST(req: Request, { params }: { params: { externo: string
       },
     })
 
-    return NextResponse.json({ ok: true })
+    let tiny_ok = false
+    let tiny_error: string | null = null
+    try {
+      const tinyRes = await tinyContatoAlterarIdVendedor(cli.external_id, destExterno)
+      tiny_ok = tinyRes.ok
+      tiny_error = tinyRes.erro
+    } catch (e: any) {
+      tiny_ok = false
+      tiny_error = e?.message ? String(e.message) : 'Erro ao sincronizar com o Tiny'
+    }
+
+    return NextResponse.json({ ok: true, tiny_ok, tiny_error })
   } catch (error: any) {
     return NextResponse.json({ ok: false, error: error?.message ?? 'Erro ao transferir cliente' }, { status: 500 })
   }

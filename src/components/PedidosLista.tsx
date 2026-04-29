@@ -752,7 +752,10 @@ type SyncModalState =
                    itensPaginados.map((p) => {
                       const isTinyOrigin = String(p.sistema_origem || 'sama').toLowerCase() === 'tiny'
                       const canEditPedido = entity === 'pedido' ? (isAdmin || p.status === 'Dados incompletos') : true
-                      const canDeletePedido = entity === 'pedido' ? isAdmin : true
+                      const canTrashPedido =
+                        entity === 'pedido' &&
+                        (isAdmin || isSupervisor) &&
+                        p.status !== 'Cancelado'
                       return (
                       <tr
                         key={p.numero}
@@ -784,15 +787,40 @@ type SyncModalState =
                          <td>
                            <div className="d-flex gap-2">
                             {isTinyOrigin ? (
-                              <Button
-                                variant="outline-warning"
-                                size="sm"
-                                onClick={(e) => e.stopPropagation()}
-                                title="Pedido vindo do Tiny"
-                                style={{ backgroundColor: '#fff', whiteSpace: 'nowrap' }}
-                              >
-                                Origem: Tiny
-                              </Button>
+                              <>
+                                <Button
+                                  variant="outline-warning"
+                                  size="sm"
+                                  onClick={(e) => e.stopPropagation()}
+                                  title="Pedido vindo do Tiny"
+                                  style={{ backgroundColor: '#fff', whiteSpace: 'nowrap' }}
+                                >
+                                  Origem: Tiny
+                                </Button>
+                                <Button
+                                  variant="outline-secondary"
+                                  size="sm"
+                                  disabled={pdfLoadingPedidoNumero === p.numero}
+                                  onClick={(e) => handleDownloadPedidoPdf(e, p.numero)}
+                                  title="Baixar PDF do pedido (ordem de compra)"
+                                >
+                                  {pdfLoadingPedidoNumero === p.numero ? (
+                                    <Spinner animation="border" size="sm" />
+                                  ) : (
+                                    <IconifyIcon icon="ri:printer-line" />
+                                  )}
+                                </Button>
+                                {canTrashPedido && (
+                                  <Button
+                                    variant="outline-danger"
+                                    size="sm"
+                                    onClick={(e) => openDeleteModal(e, p.numero)}
+                                    title="Cancelar pedido"
+                                  >
+                                    <IconifyIcon icon="ri:delete-bin-line" />
+                                  </Button>
+                                )}
+                              </>
                             ) : (
                               <>
                                 {canEditPedido && (
@@ -832,7 +860,7 @@ type SyncModalState =
                                      <IconifyIcon icon="ri:money-dollar-circle-line" />
                                    </Button>
                                  )}
-                                  {canDeletePedido && (
+                                  {canTrashPedido && (
                                     <Button
                                       variant="outline-danger"
                                       size="sm"

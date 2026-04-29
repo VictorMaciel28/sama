@@ -1,5 +1,4 @@
 import type { ShareDocumentPayload } from '@/lib/platformOrderSharePayload'
-import { PAYMENT_EMITER_ALIANCA } from '@/lib/tinyNotaFiscalPayment'
 
 const STATUS_LABELS: Record<string, string> = {
   PROPOSTA: 'Proposta',
@@ -17,31 +16,24 @@ function formatCurrency(value: number) {
 }
 
 /**
- * Mesmo desenho do email em `handleAutorizedNfe`: parágrafos `<p>` + `<strong>` (sem anexo), espelhando texto + chave da NF.
+ * Corpo HTML do “Compartilhar pedido”: parágrafos `<p>` + `<strong>` (sem anexo).
  */
 export function buildOrderShareEmailLikeNfeWebhook(order: ShareDocumentPayload): string {
   const valor = Number(order.total ?? 0)
   const valorFormatted = valor.toFixed(2).replace('.', ',')
   const destine = order.cliente
-  const origem = (order.sistema_origem && String(order.sistema_origem).trim()) || PAYMENT_EMITER_ALIANCA
   const formaPagamento = String(order.condicao_pagamento || order.forma_recebimento || '-').trim()
-  const message = `Pedido ${order.numero} para ${destine} (origem: ${origem}) com forma de pagamento ${formaPagamento} no valor de R$ ${valorFormatted}.`
+  const message = `Pedido ${order.numero} para ${destine} com forma de pagamento ${formaPagamento} no valor de R$ ${valorFormatted}.`
 
   let html = `<p>${escapeHtml(message)}</p>`
   html += `<p><strong>CNPJ:</strong> ${escapeHtml(order.cnpj || '—')}</p>`
-  if (order.tiny_id) {
-    html += `<p><strong>Número do pedido:</strong> ${order.tiny_id}</p>`
-  }
-  if (order.nf_referencia) {
-    html += `<p><strong>Ref. NF:</strong> ${escapeHtml(order.nf_referencia)}</p>`
-  }
   const statusLabel = STATUS_LABELS[String(order.status)] || String(order.status || '')
   html += `<p style="font-size:12px;color:#555">${escapeHtml(statusLabel)} · ${escapeHtml(order.vendedor_label)} · emitido em ${escapeHtml(order.emitido_em_label)}</p>`
   return html
 }
 
 /**
- * HTML mínimo no estilo da notificação de NF (parágrafos simples, sem tabelas) + lembrete de anexo.
+ * HTML mínimo (parágrafos simples, sem tabelas) + lembrete de anexo.
  */
 export function buildOrderShareEmailMinimalHtml(order: ShareDocumentPayload): string {
   const total = Number(order.total || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
@@ -78,9 +70,6 @@ export function buildOrderShareEmailText(order: ShareDocumentPayload): string {
   lines.push(`Status: ${statusLabel}`)
   lines.push(`Forma recebimento: ${order.forma_recebimento || '-'}`)
   lines.push(`Condicao pagamento: ${order.condicao_pagamento || '-'}`)
-  if (order.sistema_origem) lines.push(`Origem: ${order.sistema_origem}`)
-  if (order.tiny_id) lines.push(`Número do pedido: ${order.tiny_id}`)
-  if (order.nf_referencia) lines.push(`Ref. NF: ${order.nf_referencia}`)
   lines.push('')
   lines.push(`Endereco entrega: ${addressLines || 'Nao informado'}`)
   lines.push('')
@@ -103,7 +92,7 @@ export function buildOrderShareEmailText(order: ShareDocumentPayload): string {
 }
 
 /**
- * HTML com tabela de itens (mais pesado). Preferir `buildOrderShareEmailMinimalHtml` para alinhar ao envio de NF.
+ * HTML com tabela de itens (mais pesado). Preferir `buildOrderShareEmailMinimalHtml` para mensagens curtas.
  */
 export function buildOrderShareEmailHtml(order: ShareDocumentPayload): string {
   const statusLabel = STATUS_LABELS[String(order.status)] || String(order.status || '')
@@ -132,10 +121,6 @@ export function buildOrderShareEmailHtml(order: ShareDocumentPayload): string {
     .filter(Boolean)
     .join(' · ')
 
-  const meta: string[] = []
-  if (order.sistema_origem) meta.push(`Origem: ${escapeHtml(String(order.sistema_origem).toUpperCase())}`)
-  if (order.nf_referencia) meta.push(`NF: ${escapeHtml(order.nf_referencia)}`)
-
   return `<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
@@ -145,7 +130,7 @@ export function buildOrderShareEmailHtml(order: ShareDocumentPayload): string {
 </head>
 <body style="margin:12px;font-family:Arial,Helvetica,sans-serif;font-size:14px;line-height:1.45;color:#111">
 <h1 style="font-size:18px;margin:0 0 8px;">Pedido n&#186; ${order.numero}</h1>
-<p style="margin:0 0 12px;color:#444;font-size:13px">Emitido em ${escapeHtml(order.emitido_em_label)}${meta.length ? ` · ${meta.join(' · ')}` : ''}</p>
+<p style="margin:0 0 12px;color:#444;font-size:13px">Emitido em ${escapeHtml(order.emitido_em_label)}</p>
 <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width:640px;border:1px solid #ddd;border-radius:4px;padding:12px;margin-bottom:12px">
 <tr><td><strong>Cliente</strong><br>${escapeHtml(order.cliente)}<br><span style="font-size:12px;color:#555">${escapeHtml(order.cnpj)}</span>
 ${clientEmail ? `<br><span style="font-size:12px">Email: ${escapeHtml(clientEmail)}</span>` : ''}

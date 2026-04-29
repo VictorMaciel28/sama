@@ -41,21 +41,7 @@ export function renderPlatformOrderPdfBuffer(order: ShareDocumentPayload): Buffe
   doc.setTextColor(107, 114, 128)
   doc.text(`Emitido em ${order.emitido_em_label}`, margin, y)
   doc.setTextColor(0, 0, 0)
-  y += 18
-
-  const meta: string[] = []
-  if (order.sistema_origem) meta.push(`Origem: ${String(order.sistema_origem).toUpperCase()}`)
-  if (order.tiny_id) meta.push(`Número do pedido: ${order.tiny_id}`)
-  if (order.nf_referencia) meta.push(`Ref. NF: ${order.nf_referencia}`)
-  if (meta.length) {
-    doc.setFontSize(9)
-    doc.setTextColor(75, 85, 99)
-    doc.text(meta.join('   ·   '), margin, y)
-    doc.setTextColor(0, 0, 0)
-    y += 16
-  } else {
-    y += 10
-  }
+  y += 28
 
   const statusLabel = STATUS_LABELS[String(order.status)] || String(order.status || '')
 

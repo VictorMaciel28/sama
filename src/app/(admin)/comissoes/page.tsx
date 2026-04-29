@@ -12,6 +12,7 @@ type Linha = {
   order?: {
     numero: number
     data: string
+    faturado_em?: string
     cliente: string
     cnpj: string
     total: number
@@ -476,7 +477,7 @@ export default function ComissoesPage() {
               <table className="table table-sm table-striped table-hover mb-0">
                 <thead>
                   <tr>
-                    <th>Data</th>
+                    <th>Faturado em</th>
                     <th>Pedido</th>
                     <th>Cliente</th>
                     <th>Vendedor do Pedido</th>

@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
+import {
+  aplicarFiltroPeriodoComissaoPorFaturamento,
+  filtrarPedidosComHistoricoFaturado,
+  primeiroFaturadoPorTinyIds,
+} from '@/lib/comissaoFaturamento'
 
 export async function GET(req: Request) {
   try {
@@ -34,6 +39,7 @@ export async function GET(req: Request) {
       status: {
         in: ['FATURADO', 'ENVIADO', 'ENTREGUE'],
       },
+      tiny_id: { not: null },
     }
     if (!isAdmin) {
       where.OR = [
@@ -42,21 +48,32 @@ export async function GET(req: Request) {
         { cliente_rel: { is: { id_vendedor_externo: vendedorExterno } } },
       ]
     }
-    if (startStr || endStr) {
-      where.data = {}
-      if (startStr) where.data.gte = new Date(startStr + 'T00:00:00.000Z')
-      if (endStr) where.data.lte = new Date(endStr + 'T23:59:59.999Z')
+
+    /** Período do relatório pela data em que o pedido virou Faturado (histórico), não pela data do pedido. */
+    const temPeriodo = Boolean(startStr || endStr)
+    if (temPeriodo) {
+      const vazio = await aplicarFiltroPeriodoComissaoPorFaturamento(where, startStr, endStr)
+      if (vazio) {
+        return NextResponse.json({ ok: true, data: [] })
+      }
     }
 
     const orders = await prisma.platform_order.findMany({
       where,
       include: { cliente_rel: true },
       orderBy: { data: 'desc' },
-      take: 5000,
+      /** Sem limite quando há período: o filtro já restringe por data de faturamento; evita cortar pedidos antigos faturados no mês. */
+      take: temPeriodo ? undefined : 5000,
     })
 
+    const tinyIdsParaMapa = Array.from(
+      new Set(orders.map((o) => o.tiny_id).filter((id): id is number => id != null))
+    )
+    const primeiroFaturadoMap = await primeiroFaturadoPorTinyIds(tinyIdsParaMapa)
+    const ordersFiltrados = filtrarPedidosComHistoricoFaturado(orders, primeiroFaturadoMap)
+
     const externalsSet = new Set<string>()
-    for (const o of orders) {
+    for (const o of ordersFiltrados) {
       if (o.id_vendedor_externo) externalsSet.add(o.id_vendedor_externo)
       const clientVendor = o.cliente_rel?.id_vendedor_externo || o.client_vendor_externo || null
       if (clientVendor) externalsSet.add(clientVendor)
@@ -73,16 +90,20 @@ export async function GET(req: Request) {
 
     let seq = 1
     const computed: any[] = []
-    for (const o of orders) {
+    for (const o of ordersFiltrados) {
       const total = Number(o.total || 0)
       if (!(total > 0)) continue
       const orderVendor = (o.id_vendedor_externo || '').trim()
       const clientVendor = (o.cliente_rel?.id_vendedor_externo || o.client_vendor_externo || '').trim()
       if (!orderVendor && !clientVendor) continue
 
+      const primeiroFaturado = primeiroFaturadoMap.get(o.tiny_id!)!
+      const commissionAt = primeiroFaturado
+
       const orderView = {
         numero: o.numero,
         data: o.data.toISOString().slice(0, 10),
+        faturado_em: commissionAt.toISOString().slice(0, 10),
         cliente: o.cliente,
         cnpj: o.cnpj,
         total,
@@ -102,7 +123,7 @@ export async function GET(req: Request) {
           role: 'VENDEDOR',
           percent: 5,
           amount: Number(((total * 5) / 100).toFixed(2)),
-          created_at: o.data.toISOString(),
+          created_at: commissionAt.toISOString(),
           order_num: o.numero,
           order: orderView,
           order_vendor: orderVendorView,
@@ -119,7 +140,7 @@ export async function GET(req: Request) {
           role: 'TELEVENDAS',
           percent: 1,
           amount: Number(((total * 1) / 100).toFixed(2)),
-          created_at: o.data.toISOString(),
+          created_at: commissionAt.toISOString(),
           order_num: o.numero,
           order: orderView,
           order_vendor: orderVendorView,
@@ -135,7 +156,7 @@ export async function GET(req: Request) {
           role: 'VENDEDOR',
           percent: 4,
           amount: Number(((total * 4) / 100).toFixed(2)),
-          created_at: o.data.toISOString(),
+          created_at: commissionAt.toISOString(),
           order_num: o.numero,
           order: orderView,
           order_vendor: orderVendorView,

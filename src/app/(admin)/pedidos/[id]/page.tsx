@@ -95,9 +95,10 @@ export default function PedidoFormPage() {
   const [qtyModalProduct, setQtyModalProduct] = useState<CatalogItem | null>(null)
   const [qtyModalValue, setQtyModalValue] = useState<number>(1)
   const [qtyModalStock, setQtyModalStock] = useState<number | null>(null)
+  const [qtyModalMaxAllowed, setQtyModalMaxAllowed] = useState<number | null>(null)
+  const [qtyModalLineId, setQtyModalLineId] = useState<number | null>(null)
   const [qtyModalLoading, setQtyModalLoading] = useState(false)
   const [qtyModalError, setQtyModalError] = useState<string | null>(null)
-  const [catalogQtyError, setCatalogQtyError] = useState<string | null>(null)
   const [showTinyResult, setShowTinyResult] = useState(false)
   const [tinyResult, setTinyResult] = useState<any>(null)
   const [sentObjectResult, setSentObjectResult] = useState<any>(null)
@@ -196,16 +197,8 @@ export default function PedidoFormPage() {
   } | null>(null)
   const [isAdminUser, setIsAdminUser] = useState(false)
 
+  /** Perfil admin é necessário para exibir "Salvar alterações" em pedido existente — não pode depender só de `isNew`. */
   useEffect(() => {
-    if (!isNew) return
-    ;(async () => {
-      try {
-        const res = await fetch('/api/me/vendedor')
-        const j = await res.json()
-        if (j?.ok) setMeVendedor(j.data)
-      } catch {}
-    })()
-
     ;(async () => {
       try {
         const res = await fetch('/api/me/vendedor')
@@ -214,6 +207,17 @@ export default function PedidoFormPage() {
       } catch {
         setIsAdminUser(false)
       }
+    })()
+  }, [])
+
+  useEffect(() => {
+    if (!isNew) return
+    ;(async () => {
+      try {
+        const res = await fetch('/api/me/vendedor')
+        const j = await res.json()
+        if (j?.ok) setMeVendedor(j.data)
+      } catch {}
     })()
   }, [isNew])
 
@@ -441,14 +445,43 @@ export default function PedidoFormPage() {
     return catalog
   }, [catalogQuery, isNew, itens, catalog])
 
+  /** Modal de quantidade quando o pedido excede o disponível (substitui mensagem vermelha no catálogo). */
+  const openQuantityStockModal = (
+    p: CatalogItem,
+    overrides: {
+      initialQty: number
+      maxAllowed: number
+      stock: number | null
+      lineId?: number | null
+    }
+  ) => {
+    setQtyModalError(null)
+    setQtyModalProduct(p)
+    setQtyModalLineId(overrides.lineId ?? null)
+    setQtyModalStock(overrides.stock)
+    setQtyModalMaxAllowed(overrides.maxAllowed)
+    let initial = roundQty(overrides.initialQty)
+    initial = Math.min(initial, overrides.maxAllowed)
+    initial = Math.max(0, initial)
+    if (overrides.maxAllowed <= 0) {
+      setQtyModalValue(0)
+    } else if (initial <= 0) {
+      setQtyModalValue(1)
+    } else {
+      setQtyModalValue(initial)
+    }
+    setQtyModalLoading(false)
+    setShowQtyModal(true)
+  }
+
   const addFromCatalog = (p: CatalogItem) => {
     ;(async () => {
       try {
         const currentQty = getQtdInOrderForCatalogRow(p)
-        const { maxAllowed } = await getAvailableMaxForProduct(p.id)
+        const { maxAllowed, stock } = await getAvailableMaxForProduct(p.id)
         const nextQty = roundQty(currentQty + 1)
         if (nextQty > maxAllowed) {
-          setCatalogQtyError(`Estoque não disponível para aumentar. Máximo permitido: ${maxAllowed}`)
+          openQuantityStockModal(p, { initialQty: nextQty, maxAllowed, stock })
           return
         }
         // proceed to add
@@ -479,7 +512,6 @@ export default function PedidoFormPage() {
             } as ItemPedidoWithOriginal,
           ]
         })
-        setCatalogQtyError(null)
       } catch (e) {
         // ignore errors here to avoid disrupting catalog state
       }
@@ -513,13 +545,12 @@ export default function PedidoFormPage() {
             return true
           })
         )
-        setCatalogQtyError(null)
         return
       }
 
-      const { maxAllowed } = await getAvailableMaxForProduct(p.id)
+      const { maxAllowed, stock } = await getAvailableMaxForProduct(p.id)
       if (qty > maxAllowed) {
-        setCatalogQtyError(`Estoque não disponível. Máximo permitido: ${maxAllowed}`)
+        openQuantityStockModal(p, { initialQty: qty, maxAllowed, stock })
         return
       }
 
@@ -546,7 +577,6 @@ export default function PedidoFormPage() {
           } as ItemPedidoWithOriginal,
         ]
       })
-      setCatalogQtyError(null)
     })()
   }
 
@@ -579,29 +609,6 @@ export default function PedidoFormPage() {
         setCatalogDetailLoading(false)
       }
     })()
-  }
-
-  const openQtyEditor = async (p: CatalogItem, initialValue?: number) => {
-    setQtyModalError(null)
-    setQtyModalProduct(p)
-    setQtyModalLoading(true)
-    try {
-      const res = await fetch(`/api/produtos/${p.id}/estoque`)
-      const est = await res.json().catch(() => ({ totalEstoque: null }))
-      const stock = est?.totalEstoque != null ? Number(est.totalEstoque) : null
-      setQtyModalStock(stock)
-      const currentQty = getQtdInOrderBySku(p.codigo)
-      setQtyModalValue(typeof initialValue === 'number' ? initialValue : currentQty || 1)
-      if (stock != null && (typeof initialValue === 'number' ? initialValue : currentQty || 1) > stock) {
-        setQtyModalError(`Estoque não disponível, estoque atual: ${stock}`)
-      }
-      setShowQtyModal(true)
-    } catch (e: any) {
-      setQtyModalError('Falha ao verificar estoque')
-      setShowQtyModal(true)
-    } finally {
-      setQtyModalLoading(false)
-    }
   }
 
   const getQtdInOrderBySku = (sku?: string) => {
@@ -657,7 +664,6 @@ export default function PedidoFormPage() {
       if (!line) return
       if (qty <= 0) {
         removeItem(lineId)
-        setCatalogQtyError(null)
         return
       }
       const pid = Number(line.produtoId || 0)
@@ -668,7 +674,17 @@ export default function PedidoFormPage() {
           .reduce((a, it) => a + Number(it.quantidade || 0), 0)
         const maxForLine = maxTotal - sumOthers
         if (qty > maxForLine) {
-          setCatalogQtyError(`Estoque não disponível. Máximo permitido nesta linha: ${maxForLine}`)
+          const r = await getAvailableMaxForProduct(pid)
+          openQuantityStockModal(
+            {
+              id: pid,
+              nome: line.nome || '',
+              codigo: line.sku,
+              preco: line.preco,
+              imagem: line.imagemUrl ?? undefined,
+            },
+            { initialQty: qty, maxAllowed: maxForLine, stock: r.stock, lineId }
+          )
           return
         }
       }
@@ -679,7 +695,6 @@ export default function PedidoFormPage() {
         next[idx] = { ...next[idx], quantidade: qty }
         return next
       })
-      setCatalogQtyError(null)
     })()
   }
 
@@ -1688,9 +1703,6 @@ export default function PedidoFormPage() {
               value={catalogQuery}
               onChange={(e) => setCatalogQuery(e.target.value)}
             />
-            {catalogQtyError && (
-              <div className="text-danger small mt-2">{catalogQtyError}</div>
-            )}
             <div className="mt-2 border rounded d-none d-md-block" style={{ maxHeight: 320, overflowY: 'auto' }}>
               {catalogLoading ? (
                 <div className="p-2 small text-muted">Carregando produtos...</div>
@@ -1698,8 +1710,13 @@ export default function PedidoFormPage() {
                 <div className="p-2 small text-muted">Nenhum produto encontrado.</div>
               ) : (
                 <div className="list-group list-group-flush">
-                  {displayedCatalog.map((p) => (
-                    <div key={`${p.id}-${p.codigo || 'x'}`} className="list-group-item py-2 d-flex justify-content-between align-items-center gap-2">
+                  {displayedCatalog.map((p) => {
+                    const noPedido = getQtdInOrderForCatalogRow(p) > 0
+                    return (
+                    <div
+                      key={`${p.id}-${p.codigo || 'x'}`}
+                      className={`list-group-item py-2 d-flex justify-content-between align-items-center gap-2${noPedido ? ' bg-primary-subtle' : ''}`}
+                    >
                       <div className="me-2 flex-grow-1 min-w-0">
                         <div className="fw-semibold small">{p.nome}</div>
                         <div className="text-muted small">SKU: {p.codigo || '-'}</div>
@@ -1741,7 +1758,7 @@ export default function PedidoFormPage() {
                         </Button>
                       </div>
                     </div>
-                  ))}
+                  )})}
                 </div>
               )}
             </div>
@@ -1752,8 +1769,10 @@ export default function PedidoFormPage() {
                 <div className="p-2 small text-muted">Nenhum produto encontrado.</div>
               ) : (
                 <div className="list-group list-group-flush">
-                  {displayedCatalog.map((p) => (
-                    <div key={`m-${p.id}-${p.codigo || 'x'}`} className="list-group-item py-2">
+                  {displayedCatalog.map((p) => {
+                    const noPedido = getQtdInOrderForCatalogRow(p) > 0
+                    return (
+                    <div key={`m-${p.id}-${p.codigo || 'x'}`} className={`list-group-item py-2${noPedido ? ' bg-primary-subtle' : ''}`}>
                       <div className="fw-semibold small">{p.nome}</div>
                       <div className="text-muted small">SKU: {p.codigo || '-'}</div>
                       {p.preco != null && (
@@ -1792,7 +1811,7 @@ export default function PedidoFormPage() {
                         </Button>
                       </div>
                     </div>
-                  ))}
+                  )})}
                 </div>
               )}
             </div>
@@ -1974,7 +1993,9 @@ export default function PedidoFormPage() {
                     ? isNew
                       ? 'Enviar Proposta'
                       : 'Salvar alterações'
-                    : 'Enviar Pedido'}
+                    : isNew
+                      ? 'Enviar Pedido'
+                      : 'Salvar alterações'}
                 </Button>
               )}
             </div>
@@ -2061,46 +2082,104 @@ export default function PedidoFormPage() {
         </Modal.Footer>
       </Modal>
 
-      {/* Modal: edição de quantidade do item (usado pelo badge e quando + excede estoque) */}
-      <Modal show={showQtyModal} onHide={() => { setShowQtyModal(false); setQtyModalError(null) }} centered>
+      {/* Modal: quantidade quando excede estoque / limite do pedido */}
+      <Modal
+        show={showQtyModal}
+        onHide={() => {
+          setShowQtyModal(false)
+          setQtyModalError(null)
+          setQtyModalLineId(null)
+          setQtyModalMaxAllowed(null)
+        }}
+        centered
+      >
         <Modal.Header closeButton>
-          <Modal.Title>Editar quantidade</Modal.Title>
+          <Modal.Title>Estoque indisponível</Modal.Title>
         </Modal.Header>
         <Modal.Body>
           {qtyModalLoading ? (
-            <div className="d-flex align-items-center gap-2"><Spinner animation="border" size="sm" /><span>Verificando estoque...</span></div>
+            <div className="d-flex align-items-center gap-2">
+              <Spinner animation="border" size="sm" />
+              <span>Carregando...</span>
+            </div>
           ) : (
             <>
               <div className="mb-2 fw-semibold">{qtyModalProduct?.nome}</div>
+              <div className="small text-muted mb-3">
+                                {qtyModalStock != null && (
+                  <div className="mt-1">
+                    Estoque no depósito: <strong>{qtyModalStock}</strong>
+                  </div>
+                )}
+              </div>
               <Form.Group>
-                <Form.Label>Quantidade desejada</Form.Label>
-                <Form.Control type="number" min={1} value={qtyModalValue} onChange={(e) => setQtyModalValue(Math.max(1, Number(e.target.value)))} />
+                <Form.Label>Informar nova quantidade:</Form.Label>
+                <Form.Control
+                  type="number"
+                  min={0}
+                  max={qtyModalMaxAllowed != null ? qtyModalMaxAllowed : undefined}
+                  value={qtyModalValue}
+                  onChange={(e) => {
+                    const raw = Number(e.target.value)
+                    let v = Number.isFinite(raw) ? Math.round(raw) : 0
+                    if (qtyModalMaxAllowed != null) v = Math.min(v, qtyModalMaxAllowed)
+                    if (v < 0) v = 0
+                    setQtyModalValue(v)
+                  }}
+                />
               </Form.Group>
-              {qtyModalStock != null && (
-                <div className="small text-muted mt-2">Estoque atual: {qtyModalStock}</div>
-              )}
-              {qtyModalError && (
-                <div className="text-danger mt-2">{qtyModalError}</div>
-              )}
+              {qtyModalError && <div className="text-danger small mt-2">{qtyModalError}</div>}
             </>
           )}
         </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => { setShowQtyModal(false); setQtyModalError(null) }}>Fechar</Button>
+        <Modal.Footer className="justify-content-between">
+          <Button
+            variant="secondary"
+            onClick={() => {
+              setShowQtyModal(false)
+              setQtyModalError(null)
+              setQtyModalLineId(null)
+              setQtyModalMaxAllowed(null)
+            }}
+          >
+            Cancelar
+          </Button>
           <Button
             variant="primary"
+            disabled={qtyModalLoading || !qtyModalProduct}
             onClick={() => {
               if (!qtyModalProduct) return
-              if (qtyModalStock != null && qtyModalValue > qtyModalStock) {
-                setQtyModalError(`Estoque não disponível, estoque atual: ${qtyModalStock}`)
-                return
-              }
-              // apply quantity
+              const max = qtyModalMaxAllowed != null ? qtyModalMaxAllowed : Infinity
+              let q = roundQty(qtyModalValue)
+              if (q > max) q = max
+              if (q < 0) q = 0
               setItens((arr) => {
-                const idx = arr.findIndex((it) => (it.sku || '').toLowerCase() === (qtyModalProduct?.codigo || '').toLowerCase())
+                if (qtyModalLineId != null) {
+                  const idx = arr.findIndex((it) => it.id === qtyModalLineId)
+                  if (idx < 0) return arr
+                  if (q <= 0) {
+                    const next = [...arr]
+                    next.splice(idx, 1)
+                    return next
+                  }
+                  const next = [...arr]
+                  next[idx] = { ...next[idx], quantidade: q }
+                  return next
+                }
+                const idx = findOrderItemIndexForCatalog(qtyModalProduct, arr)
+                if (q <= 0) {
+                  if (idx < 0) return arr
+                  const next = [...arr]
+                  next.splice(idx, 1)
+                  return next
+                }
                 if (idx >= 0) {
                   const next = [...arr]
-                  next[idx] = { ...next[idx], quantidade: qtyModalValue }
+                  next[idx] = {
+                    ...next[idx],
+                    quantidade: q,
+                    produtoId: next[idx].produtoId ?? qtyModalProduct.id,
+                  }
                   return next
                 }
                 const nextId = arr.reduce((m, it) => Math.max(m, it.id), 0) + 1
@@ -2111,16 +2190,18 @@ export default function PedidoFormPage() {
                     produtoId: qtyModalProduct.id,
                     nome: qtyModalProduct.nome,
                     sku: qtyModalProduct.codigo,
-                    quantidade: qtyModalValue,
+                    quantidade: q,
                     unidade: 'PC',
                     preco: Number(qtyModalProduct.preco || 0),
                     originalPreco: Number(qtyModalProduct.preco || 0),
                     imagemUrl: qtyModalProduct.imagem || undefined,
-                  },
+                  } as ItemPedidoWithOriginal,
                 ]
               })
               setShowQtyModal(false)
               setQtyModalError(null)
+              setQtyModalLineId(null)
+              setQtyModalMaxAllowed(null)
             }}
           >
             Salvar
@@ -2141,9 +2222,6 @@ export default function PedidoFormPage() {
           <Modal.Title>Lista de itens</Modal.Title>
         </Modal.Header>
         <Modal.Body className="pt-0">
-          {catalogQtyError && (
-            <div className="text-danger small py-2">{catalogQtyError}</div>
-          )}
           <div className="d-none d-md-block" style={{ overflowX: 'hidden', overflowY: 'auto', maxHeight: 'min(72vh, 720px)' }}>
             <Table hover size="sm" className="mb-0 pedido-line-items-table">
               <thead>
@@ -2365,9 +2443,6 @@ export default function PedidoFormPage() {
             <div className="text-muted small">Nenhum histórico encontrado para este cliente.</div>
           ) : (
             <>
-              {catalogQtyError && (
-                <div className="text-danger small pb-2">{catalogQtyError}</div>
-              )}
               <div
                 className="d-flex flex-wrap gap-3 align-items-start small text-body-secondary mb-3 pb-2 border-bottom"
                 role="note"

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { useParams } from 'next/navigation'
-import { Modal, Form, Button, Spinner } from 'react-bootstrap'
+import { Modal, Form, Button, Spinner, OverlayTrigger, Tooltip } from 'react-bootstrap'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
 
 type Cliente = {
@@ -45,6 +45,9 @@ export default function SupervisorClientesPage() {
   const [destExterno, setDestExterno] = useState('')
   const [transferSubmitting, setTransferSubmitting] = useState(false)
   const [transferError, setTransferError] = useState<string | null>(null)
+  /** Após transferência: Tiny sincronizado ou aviso se só a base local atualizou. */
+  const [tinyNotice, setTinyNotice] = useState<'ok' | 'warn' | null>(null)
+  const [tinyNoticeDetail, setTinyNoticeDetail] = useState<string | null>(null)
 
   const load = async (targetPage = page) => {
     if (!externo) return
@@ -97,6 +100,8 @@ export default function SupervisorClientesPage() {
     setTransferCliente(c)
     setDestExterno('')
     setTransferError(null)
+    setTinyNotice(null)
+    setTinyNoticeDetail(null)
     setShowTransferModal(true)
     setVendedoresLoading(true)
     try {
@@ -142,6 +147,17 @@ export default function SupervisorClientesPage() {
         return
       }
       closeTransferModal()
+      if (json.tiny_ok) {
+        setTinyNotice('ok')
+        setTinyNoticeDetail(null)
+      } else {
+        setTinyNotice('warn')
+        setTinyNoticeDetail(
+          typeof json.tiny_error === 'string' && json.tiny_error.trim()
+            ? json.tiny_error.trim()
+            : 'Cliente atualizado na plataforma; não foi possível aplicar o vendedor no Tiny.'
+        )
+      }
       await load(page)
     } catch {
       setTransferError('Erro ao transferir')
@@ -149,6 +165,12 @@ export default function SupervisorClientesPage() {
       setTransferSubmitting(false)
     }
   }
+
+  useEffect(() => {
+    if (tinyNotice !== 'ok') return
+    const t = window.setTimeout(() => setTinyNotice(null), 9000)
+    return () => window.clearTimeout(t)
+  }, [tinyNotice])
 
   const rows = useMemo(() => clientes, [clientes])
   const totalPages = Math.max(1, Math.ceil(total / limit))
@@ -160,6 +182,32 @@ export default function SupervisorClientesPage() {
     <div className="p-3">
       <h2 className="mb-3">Supervisão • Clientes</h2>
       <p className="text-muted small mb-3">Clientes dos vendedores que você supervisiona.</p>
+
+      {tinyNotice === 'ok' && (
+        <OverlayTrigger
+          placement="bottom"
+          overlay={
+            <Tooltip id="tooltip-tiny-sync-ok" className="border border-success shadow-sm">
+              Também alterado no Tiny com sucesso
+            </Tooltip>
+          }
+        >
+          <div
+            className="alert alert-success border-success py-2 px-3 mb-3 d-inline-flex align-items-center gap-2"
+            role="status"
+            style={{ cursor: 'default', maxWidth: '100%' }}
+          >
+            <IconifyIcon icon="ri:checkbox-circle-fill" className="fs-5 flex-shrink-0" />
+            <span className="small fw-semibold">Também alterado no Tiny com sucesso</span>
+          </div>
+        </OverlayTrigger>
+      )}
+      {tinyNotice === 'warn' && (
+        <div className="alert alert-warning py-2 small mb-3" role="status">
+          <strong>Plataforma atualizada.</strong>{' '}
+          {tinyNoticeDetail || 'O Tiny não confirmou a alteração do vendedor.'}
+        </div>
+      )}
 
       {error && <div className="alert alert-danger">{error}</div>}
 

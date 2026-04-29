@@ -1,5 +1,10 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import {
+  aplicarFiltroPeriodoComissaoPorFaturamento,
+  filtrarPedidosComHistoricoFaturado,
+  primeiroFaturadoPorTinyIds,
+} from '@/lib/comissaoFaturamento'
 
 export async function GET(req: Request) {
   try {
@@ -13,19 +18,28 @@ export async function GET(req: Request) {
       status: {
         in: ['FATURADO', 'ENVIADO', 'ENTREGUE'],
       },
+      tiny_id: { not: null },
     }
-    if (startStr || endStr) {
-      whereBase.data = {}
-      if (startStr) whereBase.data.gte = new Date(startStr + 'T00:00:00.000Z')
-      if (endStr) whereBase.data.lte = new Date(endStr + 'T23:59:59.999Z')
+    const temPeriodo = Boolean(startStr || endStr)
+    if (temPeriodo) {
+      const vazio = await aplicarFiltroPeriodoComissaoPorFaturamento(whereBase, startStr, endStr)
+      if (vazio) {
+        if (roleParam === 'VENDEDOR') return NextResponse.json({ ok: true, caseA: [], caseC: [] })
+        if (roleParam === 'TELEVENDAS') return NextResponse.json({ ok: true, caseB: [] })
+        return NextResponse.json({ ok: true, caseA: [], caseB: [], caseC: [] })
+      }
     }
 
-    const orders = await prisma.platform_order.findMany({
+    const ordersRaw = await prisma.platform_order.findMany({
       where: whereBase,
       include: { cliente_rel: true },
       orderBy: { data: 'desc' },
-      take: 10000,
+      take: temPeriodo ? undefined : 10000,
     })
+
+    const tinyIds = Array.from(new Set(ordersRaw.map((o) => o.tiny_id).filter((id): id is number => id != null)))
+    const primeiroFaturadoMap = await primeiroFaturadoPorTinyIds(tinyIds)
+    const orders = filtrarPedidosComHistoricoFaturado(ordersRaw, primeiroFaturadoMap)
 
     const externosSet = new Set<string>()
     for (const order of orders) {

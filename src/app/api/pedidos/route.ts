@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
-import { tinyV2Post } from '@/lib/tinyOAuth'
+import { tinyV2Post, tinyV2PostWithJsonParam } from '@/lib/tinyOAuth'
+import { assertUserCanEditPedidoPlataforma } from '@/lib/pedidoOrderAccess'
 import { formatSqlDateOnly, parseYmdToSqlDate, todayCalendarYmdUtc } from '@/lib/calendarDate'
 
 function formatBrDate(iso: string) {
@@ -459,6 +460,150 @@ export async function POST(req: Request) {
         },
         { status: 400 }
       )
+    }
+
+    const existingPlatformOrder =
+      numeroInput > 0 ? await prisma.platform_order.findUnique({ where: { numero: numeroInput } }) : null
+
+    if (existingPlatformOrder) {
+      try {
+        await assertUserCanEditPedidoPlataforma(userEmail, existingPlatformOrder.id_vendedor_externo)
+      } catch (e: any) {
+        const st = e?.status === 403 ? 403 : 400
+        return NextResponse.json({ ok: false, error: e?.message ?? 'Sem permissão' }, { status: st })
+      }
+    }
+
+    const tinyIdAlter =
+      existingPlatformOrder?.tiny_id != null && Number(existingPlatformOrder.tiny_id) > 0
+        ? Number(existingPlatformOrder.tiny_id)
+        : null
+
+    let tinyResponseAlter: any = null
+    let dadosPedidoAlter: Record<string, unknown> | null = null
+
+    if (tinyIdAlter) {
+      const rawPar = Array.isArray(body?.pagamento?.parcelas) ? body.pagamento.parcelas : []
+      const parcelasAlter = rawPar.map((p: any) => {
+        const valor = Number(p?.valor ?? 0)
+        const diasRaw = p?.dias
+        const diasNum = diasRaw != null && diasRaw !== '' ? Number(diasRaw) : NaN
+        const row: Record<string, unknown> = {
+          data: p?.data ? formatBrDate(String(p.data)) : '',
+          valor,
+          obs: String(p?.observacoes ?? p?.obs ?? '').slice(0, 100),
+          forma_pagamento: String(forma_recebimento || '').toLowerCase() || 'boleto',
+        }
+        if (Number.isFinite(diasNum)) row.dias = diasNum
+        return row
+      })
+      dadosPedidoAlter = {}
+      if (body?.data) dadosPedidoAlter.data_prevista = formatBrDate(toIsoDate(body?.data))
+      if (parcelasAlter.length > 0) dadosPedidoAlter.parcelas = parcelasAlter
+      if (Object.keys(dadosPedidoAlter).length === 0) {
+        dadosPedidoAlter.obs = 'Pedido atualizado via plataforma SAMA.'
+      }
+
+      tinyResponseAlter = await tinyV2PostWithJsonParam('pedido.alterar.php', {
+        id: tinyIdAlter,
+        dados_pedido: dadosPedidoAlter,
+      })
+      const stAlter = String(tinyResponseAlter?.retorno?.status || '').toUpperCase()
+      if (stAlter !== 'OK') {
+        const msg =
+          Array.isArray(tinyResponseAlter?.retorno?.erros) && tinyResponseAlter.retorno.erros.length > 0
+            ? String(tinyResponseAlter.retorno.erros[0]?.erro || '')
+            : 'Falha ao alterar pedido no Tiny (pedido.alterar)'
+        return NextResponse.json(
+          {
+            ok: false,
+            error: msg,
+            tinyResponse: tinyResponseAlter,
+            sentObject: { dados_pedido: dadosPedidoAlter },
+          },
+          { status: 400 }
+        )
+      }
+    } else if (existingPlatformOrder) {
+      tinyResponseAlter = {
+        skippedTiny: true,
+        reason: 'Pedido sem tiny_id — alterações gravadas apenas na plataforma.',
+      }
+    }
+
+    /** Edição de pedido já existente: não chama pedido.incluir de novo (Tiny: pedido.alterar ou só DB). */
+    if (existingPlatformOrder) {
+      const platformNumero = numeroInput
+      const statusMapPersist: Record<string, any> = {
+        Proposta: 'PROPOSTA',
+        Aprovado: 'APROVADO',
+        Pendente: 'PENDENTE',
+        Cancelado: 'CANCELADO',
+        Faturado: 'FATURADO',
+        Enviado: 'ENVIADO',
+        Entregue: 'ENTREGUE',
+        'Dados incompletos': 'DADOS_INCOMPLETOS',
+      }
+      const platformStatusPersist = statusMapPersist[(body?.status as string) || 'Pendente'] ?? 'PENDENTE'
+      const baseOrderData: any = {
+        numero: platformNumero,
+        data: dataStr ? parseYmdToSqlDate(dataStr) : parseYmdToSqlDate(todayCalendarYmdUtc()),
+        cliente: String((rawCliente?.nome as string) ?? (body?.cliente || '')).toString(),
+        cnpj: String((rawCliente?.cpf_cnpj as string) ?? (body?.cnpj || '')).toString(),
+        total: total,
+        status: platformStatusPersist,
+        forma_recebimento,
+        condicao_pagamento,
+        juros_ligado,
+        endereco_entrega,
+        id_vendedor_externo: id_vendedor_externo,
+        id_client_externo: idContatoDb,
+        client_vendor_externo: client_vendor_externo,
+        sistema_origem: String(existingPlatformOrder.sistema_origem || 'sama').toLowerCase(),
+      }
+      const previousStatus = existingPlatformOrder.status
+      const savedOrder = await prisma.platform_order.update({
+        where: { numero: platformNumero },
+        data: baseOrderData,
+      })
+
+      const tinyIdForHistory = Number(savedOrder?.tiny_id || tinyIdAlter || 0)
+      const statusChanged = previousStatus !== savedOrder.status
+      if (tinyIdForHistory > 0 && statusChanged) {
+        try {
+          await prisma.$executeRaw`
+            INSERT INTO platform_order_status_history (tiny_id, status, changed_at)
+            VALUES (${tinyIdForHistory}, ${String(savedOrder.status)}, NOW())
+          `
+        } catch {
+          // ignore
+        }
+      }
+
+      const orderTinyIdForItems = Number(savedOrder?.tiny_id || tinyIdAlter || platformNumero)
+      if (orderTinyIdForItems > 0) {
+        await prisma.platform_order_product.deleteMany({ where: { tiny_id: orderTinyIdForItems } as any })
+        if (normalizedItems.length > 0) {
+          await prisma.platform_order_product.createMany({
+            data: normalizedItems.map((it: any) => ({
+              tiny_id: orderTinyIdForItems,
+              produto_id: it.produto_id,
+              codigo: it.codigo,
+              nome: it.nome,
+              preco: Number(it.preco || 0),
+              quantidade: Number(it.quantidade || 0),
+              unidade: it.unidade || 'UN',
+            })) as any,
+          })
+        }
+      }
+
+      return NextResponse.json({
+        ok: true,
+        tinyResponse: tinyResponseAlter,
+        sentObject: dadosPedidoAlter ? { dados_pedido: dadosPedidoAlter } : { local: true },
+        numero: platformNumero,
+      })
     }
 
     const pedidoV2Obj: any = {

@@ -37,7 +37,6 @@ export default function CondicoesPagamentoPage() {
   const [rows, setRows] = useState<PaymentConditionRow[]>([])
   const [saving, setSaving] = useState(false)
   const originalRef = useRef<Record<number, { name: string; admin_tier: number; valor_minimo: number | null }>>({})
-  const debounceTimers = useRef<Record<string, ReturnType<typeof setTimeout> | null>>({})
 
   async function load() {
     const res = await fetch('/api/condicoes-pagamento')
@@ -66,10 +65,6 @@ export default function CondicoesPagamentoPage() {
     })
   }, [rows])
 
-  function timerKey(globalIdx: number) {
-    return `r_${globalIdx}`
-  }
-
   function handleAdd(tier: number) {
     setRows((prev) => [...prev, { id: null, name: '', admin_tier: tier, valor_minimo: '' }])
   }
@@ -79,11 +74,6 @@ export default function CondicoesPagamentoPage() {
       const g = globalRowIndex(prev, tier, indexInTier)
       if (g < 0) return prev
       const row = prev[g]
-      const key = timerKey(g)
-      if (debounceTimers.current[key]) {
-        clearTimeout(debounceTimers.current[key] as any)
-        debounceTimers.current[key] = null
-      }
       const next = prev.filter((_, i) => i !== g)
       if (row?.id) {
         void (async () => {
@@ -115,73 +105,13 @@ export default function CondicoesPagamentoPage() {
     return Number.isNaN(n) || n <= 0 ? null : n
   }
 
+  /** Apenas estado local — sem POST ao digitar (evita `setRows` com resposta da API no meio da digitação e valor “pulando”). Use “Salvar alterações pendentes”. */
   function handleChange(tier: number, indexInTier: number, field: 'name' | 'valor_minimo', value: string) {
     setRows((prev) => {
       const g = globalRowIndex(prev, tier, indexInTier)
       if (g < 0) return prev
       const next = [...prev]
       next[g] = { ...next[g], [field]: value }
-
-      const key = timerKey(g)
-      if (debounceTimers.current[key]) {
-        clearTimeout(debounceTimers.current[key] as any)
-      }
-      debounceTimers.current[key] = setTimeout(async () => {
-        const current = next[g]
-        if (!current) {
-          debounceTimers.current[key] = null
-          return
-        }
-        try {
-          if (current.id) {
-            const res = await fetch('/api/condicoes-pagamento', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                create: [],
-                update: [
-                  {
-                    id: Number(current.id),
-                    name: String(current.name).trim(),
-                    admin_tier: current.admin_tier,
-                    valor_minimo: parseValorMinimoPayload(current.valor_minimo),
-                  },
-                ],
-                delete: [],
-              }),
-            })
-            const json = await res.json()
-            if (json?.ok) setRows(normalizeRowsFromApi(json.data || []))
-          } else {
-            if (!String(current.name || '').trim()) {
-              debounceTimers.current[key] = null
-              return
-            }
-            const res = await fetch('/api/condicoes-pagamento', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({
-                create: [
-                  {
-                    name: String(current.name).trim(),
-                    admin_tier: current.admin_tier,
-                    valor_minimo: parseValorMinimoPayload(current.valor_minimo),
-                  },
-                ],
-                update: [],
-                delete: [],
-              }),
-            })
-            const json = await res.json()
-            if (json?.ok) setRows(normalizeRowsFromApi(json.data || []))
-          }
-        } catch {
-          /* noop */
-        } finally {
-          debounceTimers.current[key] = null
-        }
-      }, 800)
-
       return next
     })
   }
@@ -206,11 +136,13 @@ export default function CondicoesPagamentoPage() {
         }))
         .filter((r) => {
           const orig = originalRef.current[r.id]
+          const vm = parseValorMinimoPayload(r.valor_minimo)
+          const nameTrim = String(r.name || '').trim()
           return (
             !orig ||
-            orig.name !== r.name ||
+            String(orig.name || '').trim() !== nameTrim ||
             orig.admin_tier !== r.admin_tier ||
-            (orig.valor_minimo ?? null) !== (r.valor_minimo ?? null)
+            (orig.valor_minimo ?? null) !== (vm ?? null)
           )
         })
 
@@ -240,7 +172,8 @@ export default function CondicoesPagamentoPage() {
             <div>
               <h4 className="mb-0">Condições de pagamento</h4>
               <small className="text-muted">
-                Cadastre o parcelamento e o valor mínimo do pedido em cada faixa de taxa administrativa.
+                Cadastre o parcelamento e o valor mínimo do pedido em cada faixa de taxa administrativa. Clique em{' '}
+                <strong>Salvar alterações pendentes</strong> para gravar no servidor.
               </small>
             </div>
           </div>

@@ -3,14 +3,13 @@ Serviço destinado a obter os dados de um Pedido.
 
 REST
 REST URL
-https://api.tiny.com.br/api2/pedido.obter.php
+[https://api.tiny.com.br/api2/pedido.obter.php](https://api.tiny.com.br/api2/pedido.obter.php)
 
 Parâmetros do serviço
 Elemento	Tipo	Ocorrência	Descrição
 token	string	obrigatório	Chave gerada para identificar sua empresa
 id	int	obrigatório	Número de identificação do pedido na Olist
 formato	string	obrigatório	Formato do retorno (json)
-
 
 Retorno do serviço
 Elemento	Tipo	Tamanho	Ocorrência	Descrição
@@ -129,8 +128,7 @@ retorno.pedido.pagamentos_integrados[].codigo_bandeira	int	-	obrigatório	Bandei
 (4) - Estes campos devem ser informados no formato dd/mm/yyyy, exemplo "01/01/2012".
 (5) - Estes campos utilizam “.” (ponto) como separador de decimais, exemplo "5.25".
 
-
-$url = 'https://api.tiny.com.br/api2/pedido.obter.php';
+$url = '[https://api.tiny.com.br/api2/pedido.obter.php](https://api.tiny.com.br/api2/pedido.obter.php)';
 $token = 'coloque aqui a sua chave da api';
 $id = 'xxxxx';
 $formato = 'JSON';
@@ -160,7 +158,6 @@ function enviarREST($url, $data, $optional_headers = null) {
 	
 	return $response;
 }
-
 
 Exemplos do retorno do serviço em JSON
 {
@@ -287,7 +284,7 @@ Exemplos do retorno do serviço em JSON
       "id_vendedor": "0",
       "nome_vendedor": "",
       "codigo_rastreamento": "TINY90831920321BR",
-      "url_rastreamento": "http://urlrastreamento.com.br",
+      "url_rastreamento": "[http://urlrastreamento.com.br](http://urlrastreamento.com.br)",
       "id_nota_fiscal": "0",
       "pagamentos_integrados": [
         {

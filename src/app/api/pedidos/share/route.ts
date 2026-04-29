@@ -8,7 +8,7 @@ import { buildOrderShareEmailLikeNfeWebhook } from '@/lib/platformOrderShareEmai
 import { buildMailShareDiagnostics } from '@/lib/mailShareDiagnostics'
 import { getInternalSmtpConfig } from '@/lib/internalSmtp'
 
-/** Mesmo transporte que o webhook de NF (`handleAutorizedNfe`). */
+/** Transporte SMTP interno (mesmo helper que outros envios transacionais). */
 function buildInternalMailer(cfg: ReturnType<typeof getInternalSmtpConfig>) {
   return nodemailer.createTransport({
     host: cfg.host,
@@ -59,7 +59,7 @@ async function sendOrderEmail(recipient: string, subject: string, htmlBody: stri
 
   let info: nodemailer.SentMessageInfo
   try {
-    /** Igual ao webhook de NF: só `html`, sem anexos (diagnóstico de entrega). */
+    /** Envio só com corpo HTML (sem anexo PDF no email). */
     info = await transporter.sendMail({
       from: cfg.from,
       to: recipient,
@@ -91,7 +91,7 @@ async function sendOrderEmail(recipient: string, subject: string, htmlBody: stri
       port: cfg.port,
       secure: cfg.port === 465,
       user: cfg.user,
-      /** Igual ao webhook de NF — sem `verify()` prévio; só o resultado do `sendMail`. */
+      /** Sem verificação SMTP prévia (`verify()`); apenas resultado do `sendMail`. */
       verified: false,
       verify_warning: null as string | null,
       verify_attempted: false,
@@ -132,7 +132,7 @@ export async function POST(req: Request) {
     const html = buildOrderShareEmailLikeNfeWebhook(payload)
     const valorFormatted = Number(payload.total ?? 0).toFixed(2).replace('.', ',')
 
-    /** Mesmo padrão de assunto da NF: `Nota X emitida — valor` → pedido + valor */
+    /** Assunto com número do pedido e valor */
     const subject = `Pedido ${payload.numero} — ${valorFormatted}`.replace(/\s+/g, ' ').trim()
 
     const mailCfg = getInternalSmtpConfig()
@@ -149,7 +149,7 @@ export async function POST(req: Request) {
       recipient: email,
       envelopeFrom: mailCfg.from,
       subject,
-      pdfFilename: '(sem anexo — mesmo formato do email de NF)',
+      pdfFilename: '(PDF não anexado ao email — disponível pelo botão Baixar PDF)',
       pdfByteLength: 0,
       host: mailCfg.host,
       port: mailCfg.port,

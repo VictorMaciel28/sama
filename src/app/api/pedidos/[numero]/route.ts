@@ -5,6 +5,7 @@ import { options } from '@/app/api/auth/[...nextauth]/options'
 import { tinyV2Post } from '@/lib/tinyOAuth'
 import { upsertClienteFromTinyObterPayload } from '@/lib/tinyObterCliente'
 import { formatSqlDateOnly } from '@/lib/calendarDate'
+import { userCanAccessPedidoPlataforma } from '@/lib/pedidoOrderAccess'
 
 function toIsoDate(input: unknown) {
   const raw = String(input || '').trim()
@@ -47,7 +48,14 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
         },
       },
     })
-    if (!row || (!isAdmin && row.id_vendedor_externo !== vendedorExterno)) {
+    if (!row) {
+      return NextResponse.json({ ok: false, error: 'Pedido não encontrado' }, { status: 404 })
+    }
+    const podeVer =
+      isAdmin ||
+      (vendedorExterno != null && row.id_vendedor_externo === vendedorExterno) ||
+      (await userCanAccessPedidoPlataforma(userEmail, row.id_vendedor_externo))
+    if (!podeVer) {
       return NextResponse.json({ ok: false, error: 'Pedido não encontrado' }, { status: 404 })
     }
 
@@ -264,25 +272,17 @@ export async function PATCH(req: Request, { params }: { params: { numero: string
     }
 
     const userEmail = session.user.email || null
-    let isAdmin = false
-    if (userEmail) {
-      const vendRecord = await prisma.vendedor.findFirst({ where: { email: userEmail } })
-      if (vendRecord?.id_vendedor_externo) {
-        const nivel = await prisma.vendedor_nivel_acesso
-          .findUnique({ where: { id_vendedor_externo: vendRecord.id_vendedor_externo } })
-          .catch(() => null)
-        if (nivel?.nivel === 'ADMINISTRADOR') isAdmin = true
-      }
-    }
-    if (!isAdmin) {
-      return NextResponse.json({ ok: false, error: 'Sem permissão para cancelar pedidos' }, { status: 403 })
-    }
 
     const numero = Number(params?.numero || 0)
     if (!numero) return NextResponse.json({ ok: false, error: 'Número inválido' }, { status: 400 })
 
     const row = await prisma.platform_order.findUnique({ where: { numero } })
     if (!row) return NextResponse.json({ ok: false, error: 'Pedido não encontrado' }, { status: 404 })
+
+    const podeCancelar = await userCanAccessPedidoPlataforma(userEmail, row.id_vendedor_externo)
+    if (!podeCancelar) {
+      return NextResponse.json({ ok: false, error: 'Sem permissão para cancelar este pedido' }, { status: 403 })
+    }
 
     if (row.status === 'CANCELADO') {
       return NextResponse.json({ ok: true, alreadyCancelled: true, tinyError: null })
