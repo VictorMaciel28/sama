@@ -150,7 +150,7 @@ export default function DevolucoesSolicitadasPage() {
         <Col>
           <h4 className="mb-1">Devoluções solicitadas</h4>
           <p className="text-muted mb-0">
-            Solicitações feitas pelo fluxo em /pos-venda (público) ou em Vendas → Pós venda (logado). Clique em uma
+            Solicitações feitas em Vendas → Pós venda (logado). Clique em uma
             linha para ver
             materiais, fotos e observações.
           </p>
