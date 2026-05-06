@@ -32,6 +32,13 @@ export const MENU_ITEMS: MenuItemType[] = [
         url: '/vendas/pos-venda',
         parentKey: 'vendas',
       },
+      {
+        key: 'devolucoes-solicitadas-vendas',
+        label: 'Devoluções solicitadas',
+        icon: 'ri:exchange-funds-line',
+        url: '/devolucoes-solicitadas',
+        parentKey: 'vendas',
+      },
     ],
   },
   {

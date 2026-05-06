@@ -2,6 +2,11 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
 import { options } from '@/app/api/auth/[...nextauth]/options'
+import {
+  notaFiscalTinyIdsForVendedor,
+  resolveDevolucaoSolicitacaoScope,
+  seesAllDevolucoesSolicitadas,
+} from '@/lib/devolucoesSolicitadasAccess'
 
 export async function GET() {
   try {
@@ -10,7 +15,26 @@ export async function GET() {
       return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 })
     }
 
+    const scope = await resolveDevolucaoSolicitacaoScope(session?.user?.email)
+    if (!scope) {
+      return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 })
+    }
+
+    let notaFilter: string[] | undefined
+    if (!seesAllDevolucoesSolicitadas(scope)) {
+      const ext = scope.id_vendedor_externo
+      if (!ext) {
+        return NextResponse.json({ ok: true, data: [] })
+      }
+      const ids = await notaFiscalTinyIdsForVendedor(ext)
+      if (ids.size === 0) {
+        return NextResponse.json({ ok: true, data: [] })
+      }
+      notaFilter = Array.from(ids)
+    }
+
     const rows = await prisma.revisar_pedido_solicitacao.findMany({
+      where: notaFilter ? { tiny_nota_fiscal_id: { in: notaFilter } } : undefined,
       orderBy: { created_at: 'desc' },
       take: 300,
       include: {

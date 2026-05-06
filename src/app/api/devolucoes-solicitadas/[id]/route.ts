@@ -2,11 +2,22 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
 import { options } from '@/app/api/auth/[...nextauth]/options'
+import {
+  canViewSolicitacaoNota,
+  notaFiscalTinyIdsForVendedor,
+  resolveDevolucaoSolicitacaoScope,
+  seesAllDevolucoesSolicitadas,
+} from '@/lib/devolucoesSolicitadasAccess'
 
 export async function GET(_req: Request, { params }: { params: { id: string } }) {
   try {
     const session = await getServerSession(options as any)
     if (!session?.user?.id) {
+      return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 })
+    }
+
+    const scope = await resolveDevolucaoSolicitacaoScope(session?.user?.email)
+    if (!scope) {
       return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 })
     }
 
@@ -24,6 +35,18 @@ export async function GET(_req: Request, { params }: { params: { id: string } })
 
     if (!row) {
       return NextResponse.json({ ok: false, error: 'Solicitação não encontrada' }, { status: 404 })
+    }
+
+    let allowedNotas = new Set<string>()
+    if (!seesAllDevolucoesSolicitadas(scope)) {
+      const ext = scope.id_vendedor_externo
+      if (!ext) {
+        return NextResponse.json({ ok: false, error: 'Sem permissão para esta solicitação.' }, { status: 403 })
+      }
+      allowedNotas = await notaFiscalTinyIdsForVendedor(ext)
+    }
+    if (!canViewSolicitacaoNota(scope, allowedNotas, row.tiny_nota_fiscal_id)) {
+      return NextResponse.json({ ok: false, error: 'Sem permissão para esta solicitação.' }, { status: 403 })
     }
 
     const base = `/api/devolucoes-solicitadas/${id}/imagem`

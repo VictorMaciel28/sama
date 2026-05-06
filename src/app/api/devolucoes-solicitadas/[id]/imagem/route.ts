@@ -3,6 +3,12 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
 import { options } from '@/app/api/auth/[...nextauth]/options'
+import {
+  canViewSolicitacaoNota,
+  notaFiscalTinyIdsForVendedor,
+  resolveDevolucaoSolicitacaoScope,
+  seesAllDevolucoesSolicitadas,
+} from '@/lib/devolucoesSolicitadasAccess'
 
 export async function GET(request: Request, { params }: { params: { id: string } }) {
   const token = process.env.BLOB_READ_WRITE_TOKEN
@@ -16,6 +22,11 @@ export async function GET(request: Request, { params }: { params: { id: string }
       return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 })
     }
 
+    const scope = await resolveDevolucaoSolicitacaoScope(session?.user?.email)
+    if (!scope) {
+      return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 })
+    }
+
     const id = Number(params.id)
     const ordem = Number(new URL(request.url).searchParams.get('ordem'))
     if (!Number.isFinite(id) || id <= 0 || !Number.isFinite(ordem) || ordem < 0 || ordem > 2) {
@@ -24,11 +35,25 @@ export async function GET(request: Request, { params }: { params: { id: string }
 
     const anexo = await prisma.revisar_pedido_solicitacao_anexo.findFirst({
       where: { solicitacao_id: id, ordem },
-      select: { blob_path: true },
+      include: {
+        solicitacao: { select: { tiny_nota_fiscal_id: true } },
+      },
     })
 
     if (!anexo?.blob_path?.trim()) {
       return NextResponse.json({ ok: false, error: 'Imagem não encontrada' }, { status: 404 })
+    }
+
+    let allowedNotas = new Set<string>()
+    if (!seesAllDevolucoesSolicitadas(scope)) {
+      const ext = scope.id_vendedor_externo
+      if (!ext) {
+        return NextResponse.json({ ok: false, error: 'Sem permissão.' }, { status: 403 })
+      }
+      allowedNotas = await notaFiscalTinyIdsForVendedor(ext)
+    }
+    if (!canViewSolicitacaoNota(scope, allowedNotas, anexo.solicitacao.tiny_nota_fiscal_id)) {
+      return NextResponse.json({ ok: false, error: 'Sem permissão.' }, { status: 403 })
     }
 
     const result = await get(anexo.blob_path, { access: 'private', token })

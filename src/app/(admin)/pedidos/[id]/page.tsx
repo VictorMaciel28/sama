@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import PageTitle from '@/components/PageTitle'
-import { Card, Row, Col, Form, Button, Table, Modal, Spinner, OverlayTrigger, Tooltip } from 'react-bootstrap'
+import { Card, Row, Col, Form, Button, Table, Modal, Spinner, OverlayTrigger, Tooltip, Pagination } from 'react-bootstrap'
 import { getPedidoByNumero, Pedido, PedidoStatus, getNextPedidoNumero, savePedido as savePedidoRemote } from '@/services/pedidos2'
 import { createProposta, updateProposta } from '@/services/propostas'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
@@ -83,6 +83,8 @@ export default function PedidoFormPage() {
   type CatalogItem = { id: number; nome: string; codigo?: string; preco?: number; imagem?: string | null }
   const [catalog, setCatalog] = useState<CatalogItem[]>([])
   const [catalogLoading, setCatalogLoading] = useState(false)
+  const [catalogPage, setCatalogPage] = useState(1)
+  const [catalogTotalPages, setCatalogTotalPages] = useState(1)
   const [catalogQuery, setCatalogQuery] = useState('')
   const [catalogSelected, setCatalogSelected] = useState<CatalogItem | null>(null)
   const [showCatalogDetail, setShowCatalogDetail] = useState(false)
@@ -392,34 +394,73 @@ export default function PedidoFormPage() {
     })()
   }, [idParam, isNew])
 
-  // Carregar catálogo inicial (100 itens) e buscar com debounce quando query >= 3
-  useEffect(() => {
-    const run = async (q: string) => {
-      setCatalogLoading(true)
-      try {
-        const data = await fetchJsonCached(`/api/produtos?q=${encodeURIComponent(q)}`, 3000)
-        const items: CatalogItem[] = (data?.retorno?.produtos || []).map((p: any) => ({
-          id: Number(p?.produto?.id ?? 0),
-          nome: p?.produto?.nome ?? '',
-          codigo: p?.produto?.codigo ?? undefined,
-          preco: p?.produto?.preco != null ? Number(p?.produto?.preco) : undefined,
-          imagem: p?.produto?.imagem ?? null,
-        })).filter((x: CatalogItem) => !!x.nome)
-        setCatalog(items)
-      } finally {
-        setCatalogLoading(false)
-      }
+  const loadCatalog = useCallback(async (q: string, page: number) => {
+    setCatalogLoading(true)
+    try {
+      const data = await fetchJsonCached(
+        `/api/produtos?q=${encodeURIComponent(q)}&pagina=${page}`,
+        3000
+      )
+      const items: CatalogItem[] = (data?.retorno?.produtos || []).map((p: any) => ({
+        id: Number(p?.produto?.id ?? 0),
+        nome: p?.produto?.nome ?? '',
+        codigo: p?.produto?.codigo ?? undefined,
+        preco: p?.produto?.preco != null ? Number(p?.produto?.preco) : undefined,
+        imagem: p?.produto?.imagem ?? null,
+      })).filter((x: CatalogItem) => !!x.nome)
+      setCatalog(items)
+      const tp = Number(data?.retorno?.numero_paginas ?? 1)
+      const cur = Number(data?.retorno?.pagina ?? page)
+      setCatalogTotalPages(Number.isFinite(tp) && tp > 0 ? tp : 1)
+      setCatalogPage(Number.isFinite(cur) && cur > 0 ? cur : page)
+    } finally {
+      setCatalogLoading(false)
     }
+  }, [])
 
-    if (!catalogQuery || catalogQuery.trim().length === 0) {
-      if (!isNew) return
-      run('')
+  const goCatalogPage = (p: number) => {
+    const next = Math.max(1, Math.min(p, catalogTotalPages))
+    const q = catalogQuery.trim()
+    if (!q) {
+      if (isNew) void loadCatalog('', next)
       return
     }
-    if (catalogQuery.trim().length < 3) return
+    if (q.length < 3) return
+    void loadCatalog(q, next)
+  }
+
+  const catalogPageNumbers = useMemo(() => {
+    const total = catalogTotalPages
+    const cur = catalogPage
+    if (total <= 12) return Array.from({ length: total }, (_, i) => i + 1)
+    const windowSize = 5
+    let start = Math.max(1, cur - Math.floor(windowSize / 2))
+    let end = Math.min(total, start + windowSize - 1)
+    if (end - start < windowSize - 1) start = Math.max(1, end - windowSize + 1)
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i)
+  }, [catalogTotalPages, catalogPage])
+
+  const showCatalogPagination = useMemo(() => {
+    if (!isNew) return false
+    const t = catalogQuery.trim()
+    if (t.length > 0 && t.length < 3) return false
+    return catalogTotalPages > 1
+  }, [isNew, catalogQuery, catalogTotalPages])
+
+  // Catálogo na Tiny: uma requisição por vez com paginação (parâmetro pagina na API)
+  useEffect(() => {
+    const q = catalogQuery.trim()
+    if (!q) {
+      if (!isNew) return
+      void loadCatalog('', 1)
+      return
+    }
+    if (q.length < 3) return
     if (catalogDebounceRef.current) clearTimeout(catalogDebounceRef.current)
-    catalogDebounceRef.current = setTimeout(() => run(catalogQuery.trim()), 600)
-  }, [catalogQuery, isNew])
+    catalogDebounceRef.current = setTimeout(() => {
+      void loadCatalog(q, 1)
+    }, 600)
+  }, [catalogQuery, isNew, loadCatalog])
 
   const displayedCatalog = useMemo(() => {
     if (!catalogQuery || catalogQuery.trim().length === 0) {
@@ -1439,7 +1480,14 @@ export default function PedidoFormPage() {
     setShowHistory(false)
   }
 
-  const getRowVariantByDate = (iso: string) => {
+  /** Faixas por idade da venda — cores fixas verde / amarelo / vermelho (histórico de produtos). */
+  const HISTORY_AGE_COLORS = {
+    success: { bg: '#d4f4dd', border: '#8fd4a8' },
+    warning: { bg: '#fff9c4', border: '#e6d645' },
+    danger: { bg: '#ffd6d6', border: '#f0a0a0' },
+  } as const
+
+  const getRowVariantByDate = (iso: string): keyof typeof HISTORY_AGE_COLORS => {
     const now = new Date()
     const dt = new Date(iso)
     const ms = now.getTime() - dt.getTime()
@@ -1703,8 +1751,11 @@ export default function PedidoFormPage() {
               value={catalogQuery}
               onChange={(e) => setCatalogQuery(e.target.value)}
             />
-            <div className="mt-2 border rounded d-none d-md-block" style={{ maxHeight: 320, overflowY: 'auto' }}>
-              {catalogLoading ? (
+            <div
+              className={`mt-2 border rounded d-none d-md-block position-relative${catalogLoading && displayedCatalog.length > 0 ? ' opacity-75' : ''}`}
+              style={{ maxHeight: 384, overflowY: 'auto', transition: 'opacity 0.15s ease' }}
+            >
+              {catalogLoading && displayedCatalog.length === 0 ? (
                 <div className="p-2 small text-muted">Carregando produtos...</div>
               ) : displayedCatalog.length === 0 ? (
                 <div className="p-2 small text-muted">Nenhum produto encontrado.</div>
@@ -1715,20 +1766,22 @@ export default function PedidoFormPage() {
                     return (
                     <div
                       key={`${p.id}-${p.codigo || 'x'}`}
-                      className={`list-group-item py-2 d-flex justify-content-between align-items-center gap-2${noPedido ? ' bg-primary-subtle' : ''}`}
+                      className={`list-group-item py-2 d-flex justify-content-between align-items-center gap-2${noPedido ? ' border border-info' : ''}`}
+                      style={noPedido ? { backgroundColor: '#e8f4fc' } : undefined}
                     >
                       <div className="me-2 flex-grow-1 min-w-0">
                         <div className="fw-semibold small">{p.nome}</div>
-                        <div className="text-muted small">SKU: {p.codigo || '-'}</div>
-                        {p.preco != null && (
-                          <div className="text-muted small">
-                            Preço:{' '}
-                            {Number(((p.preco || 0) * (1 + markupPct)) || 0).toLocaleString('pt-BR', {
-                              style: 'currency',
-                              currency: 'BRL',
-                            })}
-                          </div>
-                        )}
+                        <div className="text-muted small d-flex flex-wrap align-items-baseline gap-2">
+                          <span>SKU: {p.codigo || '-'}</span>
+                          {p.preco != null && (
+                            <span className="text-body-secondary">
+                              {Number(((p.preco || 0) * (1 + markupPct)) || 0).toLocaleString('pt-BR', {
+                                style: 'currency',
+                                currency: 'BRL',
+                              })}
+                            </span>
+                          )}
+                        </div>
                       </div>
                       <div className="d-flex gap-1 flex-shrink-0 align-items-center">
                         <Button variant="outline-secondary" size="sm" title="Detalhes" onClick={() => openCatalogDetail(p)}>
@@ -1762,8 +1815,11 @@ export default function PedidoFormPage() {
                 </div>
               )}
             </div>
-            <div className="mt-2 border rounded d-md-none" style={{ maxHeight: 360, overflowY: 'auto' }}>
-              {catalogLoading ? (
+            <div
+              className={`mt-2 border rounded d-md-none position-relative${catalogLoading && displayedCatalog.length > 0 ? ' opacity-75' : ''}`}
+              style={{ maxHeight: 432, overflowY: 'auto', transition: 'opacity 0.15s ease' }}
+            >
+              {catalogLoading && displayedCatalog.length === 0 ? (
                 <div className="p-2 small text-muted">Carregando produtos...</div>
               ) : displayedCatalog.length === 0 ? (
                 <div className="p-2 small text-muted">Nenhum produto encontrado.</div>
@@ -1772,18 +1828,23 @@ export default function PedidoFormPage() {
                   {displayedCatalog.map((p) => {
                     const noPedido = getQtdInOrderForCatalogRow(p) > 0
                     return (
-                    <div key={`m-${p.id}-${p.codigo || 'x'}`} className={`list-group-item py-2${noPedido ? ' bg-primary-subtle' : ''}`}>
+                    <div
+                      key={`m-${p.id}-${p.codigo || 'x'}`}
+                      className={`list-group-item py-2${noPedido ? ' border border-info' : ''}`}
+                      style={noPedido ? { backgroundColor: '#e8f4fc' } : undefined}
+                    >
                       <div className="fw-semibold small">{p.nome}</div>
-                      <div className="text-muted small">SKU: {p.codigo || '-'}</div>
-                      {p.preco != null && (
-                        <div className="text-muted small mb-2">
-                          Preço:{' '}
-                          {Number(((p.preco || 0) * (1 + markupPct)) || 0).toLocaleString('pt-BR', {
-                            style: 'currency',
-                            currency: 'BRL',
-                          })}
-                        </div>
-                      )}
+                      <div className="text-muted small mb-2 d-flex flex-wrap align-items-baseline gap-2">
+                        <span>SKU: {p.codigo || '-'}</span>
+                        {p.preco != null && (
+                          <span className="text-body-secondary">
+                            {Number(((p.preco || 0) * (1 + markupPct)) || 0).toLocaleString('pt-BR', {
+                              style: 'currency',
+                              currency: 'BRL',
+                            })}
+                          </span>
+                        )}
+                      </div>
                       <div className="d-flex gap-1 align-items-center flex-wrap">
                         <Button variant="outline-secondary" size="sm" title="Detalhes" onClick={() => openCatalogDetail(p)}>
                           <IconifyIcon icon="ri:search-line" />
@@ -1815,6 +1876,46 @@ export default function PedidoFormPage() {
                 </div>
               )}
             </div>
+            {showCatalogPagination && (
+              <div className="d-flex flex-column align-items-center gap-1 mt-2">
+                <Pagination size="sm" className="mb-0 flex-wrap justify-content-center">
+                  <Pagination.First disabled={catalogPage <= 1} onClick={() => goCatalogPage(1)} />
+                  <Pagination.Prev disabled={catalogPage <= 1} onClick={() => goCatalogPage(catalogPage - 1)} />
+                  {catalogTotalPages > 12 && catalogPageNumbers[0] > 1 && (
+                    <>
+                      <Pagination.Item onClick={() => goCatalogPage(1)}>1</Pagination.Item>
+                      {catalogPageNumbers[0] > 2 && <Pagination.Ellipsis disabled />}
+                    </>
+                  )}
+                  {catalogPageNumbers.map((num) => (
+                    <Pagination.Item key={num} active={num === catalogPage} onClick={() => goCatalogPage(num)}>
+                      {num}
+                    </Pagination.Item>
+                  ))}
+                  {catalogTotalPages > 12 &&
+                    catalogPageNumbers.length > 0 &&
+                    catalogPageNumbers[catalogPageNumbers.length - 1] < catalogTotalPages && (
+                      <>
+                        {catalogPageNumbers[catalogPageNumbers.length - 1] < catalogTotalPages - 1 && (
+                          <Pagination.Ellipsis disabled />
+                        )}
+                        <Pagination.Item onClick={() => goCatalogPage(catalogTotalPages)}>{catalogTotalPages}</Pagination.Item>
+                      </>
+                    )}
+                  <Pagination.Next
+                    disabled={catalogPage >= catalogTotalPages}
+                    onClick={() => goCatalogPage(catalogPage + 1)}
+                  />
+                  <Pagination.Last
+                    disabled={catalogPage >= catalogTotalPages}
+                    onClick={() => goCatalogPage(catalogTotalPages)}
+                  />
+                </Pagination>
+                <div className="small text-muted">
+                  Página {catalogPage} de {catalogTotalPages}
+                </div>
+              </div>
+            )}
             <div className="d-flex justify-content-end mt-2">
               <Button size="sm" variant="outline-secondary" onClick={() => setShowCatalogListModal(true)}>Ver lista</Button>
             </div>
@@ -2454,8 +2555,8 @@ export default function PedidoFormPage() {
                     style={{
                       width: 14,
                       height: 14,
-                      backgroundColor: 'var(--bs-success-bg-subtle, #d1e7dd)',
-                      border: '1px solid var(--bs-success-border-subtle, #a3cfbb)',
+                      backgroundColor: HISTORY_AGE_COLORS.success.bg,
+                      border: `1px solid ${HISTORY_AGE_COLORS.success.border}`,
                     }}
                     aria-hidden
                   />
@@ -2469,13 +2570,13 @@ export default function PedidoFormPage() {
                     style={{
                       width: 14,
                       height: 14,
-                      backgroundColor: 'var(--bs-warning-bg-subtle, #fff3cd)',
-                      border: '1px solid var(--bs-warning-border-subtle, #ffe69c)',
+                      backgroundColor: HISTORY_AGE_COLORS.warning.bg,
+                      border: `1px solid ${HISTORY_AGE_COLORS.warning.border}`,
                     }}
                     aria-hidden
                   />
                   <span>
-                    <strong className="text-body">Laranja:</strong> venda entre 31 dias e 3 meses atrás.
+                    <strong className="text-body">Amarelo:</strong> venda entre 31 dias e 3 meses atrás.
                   </span>
                 </div>
                 <div className="d-flex align-items-center gap-2">
@@ -2484,8 +2585,8 @@ export default function PedidoFormPage() {
                     style={{
                       width: 14,
                       height: 14,
-                      backgroundColor: 'var(--bs-danger-bg-subtle, #f8d7da)',
-                      border: '1px solid var(--bs-danger-border-subtle, #f1aeb5)',
+                      backgroundColor: HISTORY_AGE_COLORS.danger.bg,
+                      border: `1px solid ${HISTORY_AGE_COLORS.danger.border}`,
                     }}
                     aria-hidden
                   />
@@ -2510,6 +2611,7 @@ export default function PedidoFormPage() {
                   <tbody>
                     {historyItems.map((h) => {
                       const variant = getRowVariantByDate(h.created_at)
+                      const band = HISTORY_AGE_COLORS[variant]
                       const precoNum = typeof h.preco === 'string' ? Number(h.preco) : (h.preco || 0)
                       const qtdNum = typeof h.quantidade === 'string' ? Number(h.quantidade) : h.quantidade
                       const histAsCatalog: CatalogItem = {
@@ -2521,7 +2623,13 @@ export default function PedidoFormPage() {
                       const podeEditarPedido = Number(h.produto_id) > 0
                       const qtdPedido = getQtdInOrderForCatalogRow(histAsCatalog)
                       return (
-                        <tr key={h.id} className={`table-${variant}`}>
+                        <tr
+                          key={h.id}
+                          style={{
+                            backgroundColor: band.bg,
+                            borderBottom: `1px solid ${band.border}`,
+                          }}
+                        >
                           <td className="small">{new Date(h.created_at).toLocaleDateString('pt-BR')}</td>
                           <td className="small">{h.codigo || '—'}</td>
                           <td className="small col-nome">{h.nome || '—'}</td>
