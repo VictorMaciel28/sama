@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
 
+function num(v: unknown): number {
+  if (v === null || v === undefined) return 0;
+  const n = Number(String(v).replace(",", "."));
+  return Number.isFinite(n) ? n : 0;
+}
+
 export async function GET(
   req: Request,
   { params }: { params: { id: string } }
@@ -22,8 +28,11 @@ export async function GET(
   try {
     const res = await fetch("https://api.tiny.com.br/api2/produto.obter.estoque.php", {
       method: "POST",
-      headers: { 'Accept': 'application/json' },
-      body: paramsBody,
+      headers: {
+        Accept: "application/json",
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: paramsBody.toString(),
     });
 
     if (!res.ok) {
@@ -40,16 +49,33 @@ export async function GET(
       );
     }
 
-    // Calcula o total de estoque
-    const depositos = produtoEstoque.depositos || [];
-    const totalEstoque = depositos.reduce((total: number, dep: any) => {
-      const saldo = dep.deposito.saldo || 0;
-      return total + (saldo > 0 ? saldo : 0); // Soma apenas saldos positivos
-    }, 0);
+    const depositosRaw = Array.isArray(produtoEstoque.depositos)
+      ? produtoEstoque.depositos
+      : [];
 
-    // Filtra depósitos com estoque positivo para exibição
-    const depositosComEstoque = depositos.filter((dep: any) => 
-      dep.deposito.saldo > 0
+    /** Soma numérica por depósito (Tiny pode enviar saldo como string; evita concatenação no reduce). */
+    const somaDepositos = depositosRaw.reduce(
+      (acc: number, dep: { deposito?: { saldo?: unknown } }) =>
+        acc + num(dep?.deposito?.saldo),
+      0
+    );
+
+    const hasRootSaldo =
+      produtoEstoque.saldo !== undefined &&
+      produtoEstoque.saldo !== null &&
+      String(produtoEstoque.saldo).trim() !== "";
+
+    /**
+     * Saldo físico total: prioriza `produto.saldo` retornado pela Tiny (igual ao painel).
+     * Se não vier no raiz, usa a soma dos depósitos.
+     */
+    const saldoFisico = hasRootSaldo ? num(produtoEstoque.saldo) : somaDepositos;
+
+    const saldoReservadoNum = num(produtoEstoque.saldoReservado);
+    const saldoDisponivel = Math.max(0, saldoFisico - saldoReservadoNum);
+
+    const depositosComEstoque = depositosRaw.filter(
+      (dep: { deposito?: { saldo?: unknown } }) => num(dep?.deposito?.saldo) > 0
     );
 
     return NextResponse.json({
@@ -57,11 +83,18 @@ export async function GET(
       nome: produtoEstoque.nome,
       codigo: produtoEstoque.codigo,
       unidade: produtoEstoque.unidade,
-      saldo: produtoEstoque.saldo,
-      saldoReservado: produtoEstoque.saldoReservado,
-      totalEstoque: totalEstoque,
-      depositos: depositos,
-      depositosComEstoque: depositosComEstoque
+      /** Saldo físico total (Tiny). */
+      saldo: saldoFisico,
+      saldoReservado: saldoReservadoNum,
+      /** Saldo que pode ser vendido / adicionado ao pedido. */
+      saldoDisponivel,
+      /**
+       * Compatibilidade: antes era soma incorreta dos depósitos; agora = saldo disponível.
+       * Use `saldoDisponivel` em código novo.
+       */
+      totalEstoque: saldoDisponivel,
+      depositos: depositosRaw,
+      depositosComEstoque,
     });
   } catch (error) {
     console.error("Erro ao buscar estoque:", error);

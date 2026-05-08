@@ -89,7 +89,19 @@ export default function PedidoFormPage() {
   const [catalogSelected, setCatalogSelected] = useState<CatalogItem | null>(null)
   const [showCatalogDetail, setShowCatalogDetail] = useState(false)
   const catalogDebounceRef = useRef<any>(null)
-  const [catalogDetail, setCatalogDetail] = useState<{ nome?: string; codigo?: string; preco?: number; unidade?: string; imagem?: string | null; descricao?: string | null; estoque?: number | null } | null>(null)
+  const [catalogDetail, setCatalogDetail] = useState<{
+    nome?: string
+    codigo?: string
+    preco?: number
+    unidade?: string
+    imagem?: string | null
+    descricao?: string | null
+    /** Saldo físico (Tiny). */
+    saldo?: number | null
+    saldoReservado?: number | null
+    /** max(0, saldo - saldoReservado) — limite para o pedido. */
+    saldoDisponivel?: number | null
+  } | null>(null)
   const [catalogDetailLoading, setCatalogDetailLoading] = useState(false)
   const [catalogDetailError, setCatalogDetailError] = useState<string | null>(null)
   const [showCatalogListModal, setShowCatalogListModal] = useState(false)
@@ -97,6 +109,11 @@ export default function PedidoFormPage() {
   const [qtyModalProduct, setQtyModalProduct] = useState<CatalogItem | null>(null)
   const [qtyModalValue, setQtyModalValue] = useState<number>(1)
   const [qtyModalStock, setQtyModalStock] = useState<number | null>(null)
+  const [qtyModalEstoqueInfo, setQtyModalEstoqueInfo] = useState<{
+    saldo: number
+    reservado: number
+    disponivel: number
+  } | null>(null)
   const [qtyModalMaxAllowed, setQtyModalMaxAllowed] = useState<number | null>(null)
   const [qtyModalLineId, setQtyModalLineId] = useState<number | null>(null)
   const [qtyModalLoading, setQtyModalLoading] = useState(false)
@@ -278,6 +295,36 @@ export default function PedidoFormPage() {
     return Math.round(n)
   }
 
+  /** Limite de venda = saldo disponível na Tiny (saldo − reservado). */
+  function estoqueDisponivelFromResponse(est: any): number | null {
+    if (est == null) return null
+    if (est.saldoDisponivel != null) {
+      const n = Number(est.saldoDisponivel)
+      return Number.isFinite(n) ? n : null
+    }
+    if (est.totalEstoque != null) {
+      const n = Number(est.totalEstoque)
+      return Number.isFinite(n) ? n : null
+    }
+    return null
+  }
+
+  function estoqueBreakdownFromResponse(est: any): {
+    saldo: number
+    reservado: number
+    disponivel: number
+  } | null {
+    const disponivel = estoqueDisponivelFromResponse(est)
+    if (disponivel == null || !Number.isFinite(disponivel)) return null
+    const saldo = est?.saldo != null ? Number(est.saldo) : NaN
+    const reservado = est?.saldoReservado != null ? Number(est.saldoReservado) : NaN
+    return {
+      saldo: Number.isFinite(saldo) ? saldo : 0,
+      reservado: Number.isFinite(reservado) ? reservado : 0,
+      disponivel,
+    }
+  }
+
   const getQtdInOrderByProductId = (produtoId?: number) => {
     if (!produtoId) return 0
     const pid = Number(produtoId || 0)
@@ -291,17 +338,25 @@ export default function PedidoFormPage() {
     const currentQty = getQtdInOrderByProductId(produtoId)
     try {
       const est = await fetchJsonCached(`/api/produtos/${produtoId}/estoque`, 4000)
-      const stock = est?.totalEstoque != null ? Number(est.totalEstoque) : null
+      const stock = estoqueDisponivelFromResponse(est)
+      const estoqueInfo = estoqueBreakdownFromResponse(est)
       if (stock == null || !Number.isFinite(stock) || stock < 0) {
-        // If stock is unknown, allow at least keeping current qty.
-        return { maxAllowed: currentQty, stock: null as number | null, currentQty }
+        return {
+          maxAllowed: currentQty,
+          stock: null as number | null,
+          estoqueInfo: null as null | { saldo: number; reservado: number; disponivel: number },
+          currentQty,
+        }
       }
-      // Rule: user must be able to return to the already-loaded order quantity,
-      // even if live stock is lower (order has already "reserved" that amount).
       const maxAllowed = Math.max(currentQty, stock)
-      return { maxAllowed, stock, currentQty }
+      return { maxAllowed, stock, estoqueInfo, currentQty }
     } catch {
-      return { maxAllowed: currentQty, stock: null as number | null, currentQty }
+      return {
+        maxAllowed: currentQty,
+        stock: null as number | null,
+        estoqueInfo: null as null | { saldo: number; reservado: number; disponivel: number },
+        currentQty,
+      }
     }
   }
 
@@ -493,6 +548,7 @@ export default function PedidoFormPage() {
       initialQty: number
       maxAllowed: number
       stock: number | null
+      estoqueInfo?: { saldo: number; reservado: number; disponivel: number } | null
       lineId?: number | null
     }
   ) => {
@@ -500,6 +556,7 @@ export default function PedidoFormPage() {
     setQtyModalProduct(p)
     setQtyModalLineId(overrides.lineId ?? null)
     setQtyModalStock(overrides.stock)
+    setQtyModalEstoqueInfo(overrides.estoqueInfo ?? null)
     setQtyModalMaxAllowed(overrides.maxAllowed)
     let initial = roundQty(overrides.initialQty)
     initial = Math.min(initial, overrides.maxAllowed)
@@ -519,10 +576,10 @@ export default function PedidoFormPage() {
     ;(async () => {
       try {
         const currentQty = getQtdInOrderForCatalogRow(p)
-        const { maxAllowed, stock } = await getAvailableMaxForProduct(p.id)
+        const { maxAllowed, stock, estoqueInfo } = await getAvailableMaxForProduct(p.id)
         const nextQty = roundQty(currentQty + 1)
         if (nextQty > maxAllowed) {
-          openQuantityStockModal(p, { initialQty: nextQty, maxAllowed, stock })
+          openQuantityStockModal(p, { initialQty: nextQty, maxAllowed, stock, estoqueInfo })
           return
         }
         // proceed to add
@@ -589,9 +646,9 @@ export default function PedidoFormPage() {
         return
       }
 
-      const { maxAllowed, stock } = await getAvailableMaxForProduct(p.id)
+      const { maxAllowed, stock, estoqueInfo } = await getAvailableMaxForProduct(p.id)
       if (qty > maxAllowed) {
-        openQuantityStockModal(p, { initialQty: qty, maxAllowed, stock })
+        openQuantityStockModal(p, { initialQty: qty, maxAllowed, stock, estoqueInfo })
         return
       }
 
@@ -634,7 +691,10 @@ export default function PedidoFormPage() {
           fetch(`/api/produtos/${p.id}/estoque`),
         ])
         const prod = await prodRes.json()
-        const est = await estoqueRes.json().catch(() => ({ totalEstoque: null }))
+        const est = await estoqueRes.json().catch(() => ({}))
+        const sd = est?.saldoDisponivel != null ? Number(est.saldoDisponivel) : null
+        const sFis = est?.saldo != null ? Number(est.saldo) : null
+        const sRes = est?.saldoReservado != null ? Number(est.saldoReservado) : null
         setCatalogDetail({
           nome: prod?.nome ?? p.nome,
           codigo: prod?.codigo ?? p.codigo,
@@ -642,7 +702,9 @@ export default function PedidoFormPage() {
           unidade: prod?.unidade ?? undefined,
           imagem: prod?.imagem ?? p.imagem ?? null,
           descricao: prod?.descricao ?? null,
-          estoque: est?.totalEstoque != null ? Number(est.totalEstoque) : null,
+          saldo: sFis != null && Number.isFinite(sFis) ? sFis : null,
+          saldoReservado: sRes != null && Number.isFinite(sRes) ? sRes : null,
+          saldoDisponivel: sd != null && Number.isFinite(sd) ? sd : null,
         })
       } catch (e: any) {
         setCatalogDetailError('Falha ao carregar detalhes do produto')
@@ -687,12 +749,12 @@ export default function PedidoFormPage() {
       .reduce((a, it) => a + Number(it.quantidade || 0), 0)
     const currentTotal = sumOthers + oldQty
     try {
-      const est = await fetchJsonCached(`/api/produtos/${produtoId}/estoque`, 4000)
-      const stock = est?.totalEstoque != null ? Number(est.totalEstoque) : null
-      if (stock == null || !Number.isFinite(stock) || stock < 0) {
-        return { maxTotal: currentTotal }
-      }
-      return { maxTotal: Math.max(currentTotal, stock) }
+        const est = await fetchJsonCached(`/api/produtos/${produtoId}/estoque`, 4000)
+        const stock = estoqueDisponivelFromResponse(est)
+        if (stock == null || !Number.isFinite(stock) || stock < 0) {
+          return { maxTotal: currentTotal }
+        }
+        return { maxTotal: Math.max(currentTotal, stock) }
     } catch {
       return { maxTotal: currentTotal }
     }
@@ -724,7 +786,7 @@ export default function PedidoFormPage() {
               preco: line.preco,
               imagem: line.imagemUrl ?? undefined,
             },
-            { initialQty: qty, maxAllowed: maxForLine, stock: r.stock, lineId }
+            { initialQty: qty, maxAllowed: maxForLine, stock: r.stock, estoqueInfo: r.estoqueInfo, lineId }
           )
           return
         }
@@ -1433,6 +1495,7 @@ export default function PedidoFormPage() {
       ])
       const prod = await prodRes.json()
       const est = await estoqueRes.json()
+      const disp = estoqueDisponivelFromResponse(est)
       setItens((arr) => arr.map((it) => it.id === itemId ? {
         ...it,
         produtoId,
@@ -1441,7 +1504,7 @@ export default function PedidoFormPage() {
         unidade: prod?.unidade || it.unidade,
         preco: Number(prod?.preco || 0),
         originalPreco: Number(prod?.preco || 0),
-        estoque: Number(est?.totalEstoque ?? 0),
+        estoque: disp != null ? disp : Number(est?.totalEstoque ?? 0),
         imagemUrl: prod?.imagem || it.imagemUrl,
       } : it))
       setShowSuggestForItem((prev) => ({ ...prev, [itemId]: false }))
@@ -2161,7 +2224,15 @@ export default function PedidoFormPage() {
               <div className="mb-2"><strong>SKU:</strong> {(catalogDetail?.codigo ?? catalogSelected.codigo) || '-'}</div>
               <div className="mb-2"><strong>Preço:</strong> {Number(((catalogDetail?.preco ?? catalogSelected.preco) * (1 + markupPct)) || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</div>
               {catalogDetail?.unidade && <div className="mb-2"><strong>Unidade:</strong> {catalogDetail.unidade}</div>}
-              {catalogDetail?.estoque != null && <div className="mb-2"><strong>Estoque:</strong> {catalogDetail.estoque}</div>}
+              {catalogDetail?.saldo != null && Number.isFinite(catalogDetail.saldo) && (
+                <div className="mb-2"><strong>Saldo:</strong> {catalogDetail.saldo}</div>
+              )}
+              {catalogDetail?.saldoReservado != null && Number.isFinite(catalogDetail.saldoReservado) && (
+                <div className="mb-2"><strong>Saldo reservado:</strong> {catalogDetail.saldoReservado}</div>
+              )}
+              {catalogDetail?.saldoDisponivel != null && Number.isFinite(catalogDetail.saldoDisponivel) && (
+                <div className="mb-2"><strong>Disponível para venda:</strong> {catalogDetail.saldoDisponivel}</div>
+              )}
               {catalogDetail?.descricao && <div className="mb-2"><strong>Descrição:</strong> <div className="small text-muted">{catalogDetail.descricao}</div></div>}
               <div className="text-center">
                 {(catalogDetail?.imagem ?? catalogSelected.imagem) ? (
@@ -2191,6 +2262,7 @@ export default function PedidoFormPage() {
           setQtyModalError(null)
           setQtyModalLineId(null)
           setQtyModalMaxAllowed(null)
+          setQtyModalEstoqueInfo(null)
         }}
         centered
       >
@@ -2207,11 +2279,23 @@ export default function PedidoFormPage() {
             <>
               <div className="mb-2 fw-semibold">{qtyModalProduct?.nome}</div>
               <div className="small text-muted mb-3">
-                                {qtyModalStock != null && (
+                {qtyModalEstoqueInfo ? (
+                  <>
+                    <div className="mt-1">
+                      Saldo: <strong>{qtyModalEstoqueInfo.saldo}</strong>
+                    </div>
+                    <div className="mt-1">
+                      Saldo reservado: <strong>{qtyModalEstoqueInfo.reservado}</strong>
+                    </div>
+                    <div className="mt-1">
+                      Disponível para venda: <strong>{qtyModalEstoqueInfo.disponivel}</strong>
+                    </div>
+                  </>
+                ) : qtyModalStock != null ? (
                   <div className="mt-1">
-                    Estoque no depósito: <strong>{qtyModalStock}</strong>
+                    Disponível para venda: <strong>{qtyModalStock}</strong>
                   </div>
-                )}
+                ) : null}
               </div>
               <Form.Group>
                 <Form.Label>Informar nova quantidade:</Form.Label>
@@ -2241,6 +2325,7 @@ export default function PedidoFormPage() {
               setQtyModalError(null)
               setQtyModalLineId(null)
               setQtyModalMaxAllowed(null)
+              setQtyModalEstoqueInfo(null)
             }}
           >
             Cancelar
