@@ -55,7 +55,7 @@ export const MENU_ITEMS: MenuItemType[] = [
       },
       {
         key: 'vendedores',
-        label: 'Vendedores',
+        label: 'Representantes',
         icon: 'ri:user-star-line',
         url: '/vendedores',
         parentKey: 'administracao',
@@ -138,7 +138,7 @@ export const MENU_ITEMS: MenuItemType[] = [
       },
       {
         key: 'supervisao-vendedores',
-        label: 'Vendedores',
+        label: 'Representantes',
         icon: 'ri:user-star-line',
         url: '/supervisao/vendedores',
         parentKey: 'supervisao',

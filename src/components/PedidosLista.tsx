@@ -458,12 +458,19 @@ type SyncModalState =
     setEvolveError(null)
     try {
       const full = await getPedidoByNumero(evolveItem.numero)
+      if (!full) {
+        setEvolveError(
+          'Não foi possível carregar os dados completos da proposta (itens, cliente Tiny). Abra a proposta na tela de edição e tente novamente.'
+        )
+        return
+      }
+      // Não mesclar a linha da lista (`evolveItem`) sobre o GET: a lista pode vir sem `itens` ou com
+      // campos enxutos e sobrescrever `itens` / ids vindos de GET /api/pedidos/[numero].
       const res = await savePedidoRemote({
-        ...(full || {}),
-        ...evolveItem,
-        forma_recebimento: full?.forma_recebimento ?? evolveItem.forma_recebimento,
-        condicao_pagamento: full?.condicao_pagamento ?? evolveItem.condicao_pagamento,
-        juros_ligado: full?.juros_ligado ?? evolveItem.juros_ligado ?? true,
+        ...full,
+        forma_recebimento: full.forma_recebimento ?? evolveItem.forma_recebimento ?? null,
+        condicao_pagamento: full.condicao_pagamento ?? evolveItem.condicao_pagamento ?? null,
+        juros_ligado: full.juros_ligado ?? evolveItem.juros_ligado ?? true,
         status: 'Pendente',
       })
       // Only remove the proposal from the list if backend returned a platform numero (pedido created)
@@ -756,6 +763,12 @@ type SyncModalState =
                         entity === 'pedido' &&
                         (isAdmin || isSupervisor) &&
                         p.status !== 'Cancelado'
+                      /** DELETE /api/propostas: admin ou dono (`id_vendedor_externo`). Lista já filtra por mim quando não sou admin. */
+                      const canTrashProposta =
+                        entity === 'proposta' &&
+                        (isAdmin ||
+                          (Boolean(meVendedorExterno) &&
+                            String(p.id_vendedor_externo ?? '') === String(meVendedorExterno)))
                       return (
                       <tr
                         key={p.numero}
@@ -860,6 +873,16 @@ type SyncModalState =
                                      <IconifyIcon icon="ri:money-dollar-circle-line" />
                                    </Button>
                                  )}
+                                  {canTrashProposta && (
+                                    <Button
+                                      variant="outline-danger"
+                                      size="sm"
+                                      onClick={(e) => openDeleteModal(e, p.numero)}
+                                      title="Excluir proposta"
+                                    >
+                                      <IconifyIcon icon="ri:delete-bin-line" />
+                                    </Button>
+                                  )}
                                   {canTrashPedido && (
                                     <Button
                                       variant="outline-danger"

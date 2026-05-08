@@ -149,12 +149,6 @@ export default function DevolucoesSolicitadasPage() {
       <Row className="mb-4">
         <Col>
           <h4 className="mb-1">Devoluções solicitadas</h4>
-          <p className="text-muted mb-0">
-            Solicitações feitas em Vendas → Pós venda (logado). Clique em uma linha para ver materiais,
-            fotos e observações. Perfil <strong>televendas</strong> vê todas as solicitações; perfil{' '}
-            <strong>vendedor</strong> vê apenas as notas vinculadas aos seus pedidos na plataforma.
-            Administradores e supervisores também veem todas.
-          </p>
         </Col>
       </Row>
 

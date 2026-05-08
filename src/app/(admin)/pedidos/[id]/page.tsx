@@ -67,7 +67,15 @@ export default function PedidoFormPage() {
 
   const [formaRecebimento, setFormaRecebimento] = useState('Boleto')
   const [condicaoPagamento, setCondicaoPagamento] = useState('')
+  /** Admin/supervisor: catálogo (`payment_condition`) vs texto livre (ex.: 30/60/90 para o Tiny). */
+  const [modoCondicaoCatalogo, setModoCondicaoCatalogo] = useState(true)
+  const condicaoModoInicializadoRef = useRef(false)
   const [descontoPercent, setDescontoPercent] = useState<number>(0)
+
+  useEffect(() => {
+    condicaoModoInicializadoRef.current = false
+    setModoCondicaoCatalogo(true)
+  }, [idParam])
   const [receiveForms, setReceiveForms] = useState<Array<{ id: number; nome: string; situacao: number }>>([])
 
   type ItemPedido = { id: number; nome: string; sku?: string; quantidade: number; unidade: string; preco: number; estoque?: number; produtoId?: number; imagemUrl?: string }
@@ -213,8 +221,19 @@ export default function PedidoFormPage() {
     tipo?: 'VENDEDOR' | 'TELEVENDAS' | null
     id_vendedor_externo?: string | null
     nome?: string | null
+    is_admin?: boolean
+    is_supervisor?: boolean
   } | null>(null)
   const [isAdminUser, setIsAdminUser] = useState(false)
+
+  /** Representante gravado em `platform_order.id_vendedor_externo` (editável conforme perfil). */
+  const [pedidoRepresentanteExterno, setPedidoRepresentanteExterno] = useState('')
+  /** Nome vindo do pedido salvo (exibe quando não há opção na lista). */
+  const [pedidoRepresentanteNomeCarregado, setPedidoRepresentanteNomeCarregado] = useState<string | null>(null)
+  /** Representante da carteira do cliente (`client_vendor` / cliente.id_vendedor_externo). */
+  const [carteiraRepresentanteExterno, setCarteiraRepresentanteExterno] = useState<string | null>(null)
+  const [carteiraRepresentanteNome, setCarteiraRepresentanteNome] = useState<string | null>(null)
+  const [representantesPedidoOptions, setRepresentantesPedidoOptions] = useState<{ externo: string; nome: string }[]>([])
 
   /** Perfil admin é necessário para exibir "Salvar alterações" em pedido existente — não pode depender só de `isNew`. */
   useEffect(() => {
@@ -222,23 +241,71 @@ export default function PedidoFormPage() {
       try {
         const res = await fetch('/api/me/vendedor')
         const json = await res.json()
-        setIsAdminUser(Boolean(json?.ok && json?.data?.is_admin))
+        if (json?.ok && json.data) {
+          setMeVendedor(json.data)
+          setIsAdminUser(Boolean(json.data?.is_admin))
+        } else {
+          setMeVendedor(null)
+          setIsAdminUser(false)
+        }
       } catch {
+        setMeVendedor(null)
         setIsAdminUser(false)
       }
     })()
   }, [])
 
+  /** Lista para o select de representante do pedido (admin = todos; supervisor = equipe). */
   useEffect(() => {
-    if (!isNew) return
+    if (!meVendedor?.is_admin && !meVendedor?.is_supervisor) return
     ;(async () => {
       try {
-        const res = await fetch('/api/me/vendedor')
-        const j = await res.json()
-        if (j?.ok) setMeVendedor(j.data)
-      } catch {}
+        const res = await fetch('/api/me/representantes-pedido')
+        const json = await res.json()
+        if (json?.ok && Array.isArray(json.data)) setRepresentantesPedidoOptions(json.data)
+        else setRepresentantesPedidoOptions([])
+      } catch {
+        setRepresentantesPedidoOptions([])
+      }
     })()
-  }, [isNew])
+  }, [meVendedor?.is_admin, meVendedor?.is_supervisor])
+
+  /** Novo pedido: representante do pedido padrão = usuário logado. */
+  useEffect(() => {
+    if (!isNew || !meVendedor?.id_vendedor_externo) return
+    setPedidoRepresentanteExterno((prev) => (prev && prev.trim() !== '' ? prev : String(meVendedor.id_vendedor_externo)))
+    setPedidoRepresentanteNomeCarregado(null)
+  }, [isNew, meVendedor?.id_vendedor_externo])
+
+  const mostrarDoisCamposRepresentante = Boolean(
+    meVendedor?.is_admin || meVendedor?.is_supervisor || meVendedor?.tipo === 'TELEVENDAS'
+  )
+  const mostrarSoUmVendedor = Boolean(
+    meVendedor && !meVendedor.is_admin && !meVendedor.is_supervisor && meVendedor.tipo !== 'TELEVENDAS'
+  )
+
+  const pedidoRepSelectOptions = useMemo(() => {
+    const ext = pedidoRepresentanteExterno.trim()
+    if (!ext) return representantesPedidoOptions
+    if (representantesPedidoOptions.some((o) => o.externo === ext)) return representantesPedidoOptions
+    return [
+      ...representantesPedidoOptions,
+      {
+        externo: ext,
+        nome: (pedidoRepresentanteNomeCarregado || ext).trim(),
+      },
+    ]
+  }, [representantesPedidoOptions, pedidoRepresentanteExterno, pedidoRepresentanteNomeCarregado])
+
+  const textoVendedorPedidoSomenteLeitura = useMemo(() => {
+    const ext = pedidoRepresentanteExterno.trim()
+    if (pedidoRepresentanteNomeCarregado && pedidoRepresentanteNomeCarregado.trim())
+      return pedidoRepresentanteNomeCarregado.trim()
+    const opt = pedidoRepSelectOptions.find((o) => o.externo === ext)
+    if (opt?.nome) return opt.nome
+    if (meVendedor?.id_vendedor_externo === ext && meVendedor?.nome) return meVendedor.nome
+    return ext || '—'
+  }, [pedidoRepresentanteExterno, pedidoRepresentanteNomeCarregado, pedidoRepSelectOptions, meVendedor])
 
   // Submissão Tiny
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -389,11 +456,11 @@ export default function PedidoFormPage() {
 
           const linkedVendedor = (existing as any)?.selected_vendedor
           if (linkedVendedor?.id_vendedor_externo) {
-            setMeVendedor({
-              id_vendedor_externo: String(linkedVendedor.id_vendedor_externo),
-              nome: linkedVendedor?.nome || null,
-              tipo: linkedVendedor?.tipo || null,
-            })
+            setPedidoRepresentanteExterno(String(linkedVendedor.id_vendedor_externo))
+            setPedidoRepresentanteNomeCarregado(linkedVendedor?.nome ? String(linkedVendedor.nome) : null)
+          } else if ((existing as any)?.id_vendedor_externo) {
+            setPedidoRepresentanteExterno(String((existing as any).id_vendedor_externo))
+            setPedidoRepresentanteNomeCarregado(null)
           }
 
           // Prefer local DB relation via platform_order.id_client_externo -> cliente.external_id.
@@ -414,6 +481,23 @@ export default function PedidoFormPage() {
               cep: linkedClient?.cep ?? null,
               uf: linkedClient?.uf ?? null,
             })
+          }
+
+          {
+            let carteiraExt =
+              (existing as any)?.client_vendor_externo != null && String((existing as any).client_vendor_externo).trim() !== ''
+                ? String((existing as any).client_vendor_externo).trim()
+                : null
+            let carteiraNome =
+              (existing as any)?.client_vendor_nome != null && String((existing as any).client_vendor_nome).trim() !== ''
+                ? String((existing as any).client_vendor_nome).trim()
+                : null
+            if (!carteiraExt && linkedClient?.id_vendedor_externo) {
+              carteiraExt = String(linkedClient.id_vendedor_externo).trim()
+              carteiraNome = linkedClient.nome_vendedor ?? carteiraNome
+            }
+            setCarteiraRepresentanteExterno(carteiraExt)
+            setCarteiraRepresentanteNome(carteiraNome)
           }
 
           const hasEnderecoEntrega =
@@ -848,6 +932,12 @@ export default function PedidoFormPage() {
   const selectCliente = (opt: ClientSuggestion) => {
     setForm((f) => ({ ...f, cliente: opt.nome, cnpj: opt.cpf_cnpj || '' }))
     setSelectedClient(opt)
+    const cvEx =
+      opt.id_vendedor_externo != null && String(opt.id_vendedor_externo).trim() !== ''
+        ? String(opt.id_vendedor_externo).trim()
+        : null
+    setCarteiraRepresentanteExterno(cvEx)
+    setCarteiraRepresentanteNome(opt.nome_vendedor ?? null)
     setIsDifferentDeliveryAddress(false)
     setDeliveryAddress({
       endereco: opt.endereco || '',
@@ -866,6 +956,8 @@ export default function PedidoFormPage() {
     setContactFormErrors({})
     setForm((f) => ({ ...f, cliente: '', cnpj: '' }))
     setSelectedClient(null)
+    setCarteiraRepresentanteExterno(null)
+    setCarteiraRepresentanteNome(null)
     setShowClientSuggest(false)
     setClientSuggestions([])
     setIsDifferentDeliveryAddress(false)
@@ -1087,8 +1179,12 @@ export default function PedidoFormPage() {
           forma_recebimento: formaRecebimento,
           condicao_pagamento: condicaoPagamento,
           idContato: selectedClient?.external_id ? Number(selectedClient.external_id) : 0,
+          id_vendedor_externo: pedidoRepresentanteExterno.trim() || meVendedor?.id_vendedor_externo || null,
+          client_vendor_externo: carteiraRepresentanteExterno,
           vendedor: {
-            id: Number(meVendedor?.id_vendedor_externo || 0),
+            id: Number(
+              pedidoRepresentanteExterno.trim() || meVendedor?.id_vendedor_externo || 0
+            ),
           },
         }
         payloadProposal.cliente =
@@ -1149,7 +1245,8 @@ export default function PedidoFormPage() {
             ? Number(String(formExt.id_client_externo).replace(/\D/g, '')) || 0
             : 0
       const vendedorIdNum = Number(
-        meVendedor?.id_vendedor_externo ||
+        pedidoRepresentanteExterno.trim() ||
+          meVendedor?.id_vendedor_externo ||
           formExt.id_vendedor_externo ||
           0
       )
@@ -1160,6 +1257,8 @@ export default function PedidoFormPage() {
         condicao_pagamento: condicaoPagamento,
         juros_ligado: true,
         idContato,
+        id_vendedor_externo: pedidoRepresentanteExterno.trim() || null,
+        client_vendor_externo: carteiraRepresentanteExterno,
         vendedor: {
           id: Number.isFinite(vendedorIdNum) && vendedorIdNum > 0 ? vendedorIdNum : 0,
         },
@@ -1294,17 +1393,6 @@ export default function PedidoFormPage() {
     [condicaoPagamento, paymentConditions]
   )
 
-  /** Condições antigas gravadas só com o nome: associa ao id do cadastro (prioriza faixa isenta, depois 3%, 5%). */
-  useEffect(() => {
-    if (!condicaoPagamento) return
-    if (parsePaymentConditionSelectValue(condicaoPagamento) != null) return
-    const same = paymentConditions.filter((c) => c.name === condicaoPagamento)
-    if (same.length >= 1) {
-      const pick = [...same].sort((a, b) => a.admin_tier - b.admin_tier)[0]
-      setCondicaoPagamento(formatPaymentConditionSelectValue(pick.id))
-    }
-  }, [paymentConditions, condicaoPagamento])
-
   useEffect(() => {
     let mounted = true
     ;(async () => {
@@ -1337,6 +1425,8 @@ export default function PedidoFormPage() {
 
   const isTinyOrder = String((form as any)?.sistema_origem || '').toLowerCase() === 'tiny'
 
+  const podeCondicaoPersonalizada = Boolean(meVendedor?.is_admin || meVendedor?.is_supervisor)
+
   /** Condição atual não bate com nenhum cadastro (ex.: Tiny legado). */
   const condicaoDespadronizada = useMemo(() => {
     if (!condicaoPagamento) return false
@@ -1346,6 +1436,28 @@ export default function PedidoFormPage() {
     if (condicaoPagamento === 'À vista' || condicaoPagamento === '7 dias') return false
     return true
   }, [condicaoPagamento, paymentConditions])
+
+  /** Condições antigas gravadas só com o nome: associa ao id do cadastro (prioriza faixa isenta, depois 3%, 5%). */
+  useEffect(() => {
+    if (!modoCondicaoCatalogo) return
+    if (!condicaoPagamento) return
+    if (parsePaymentConditionSelectValue(condicaoPagamento) != null) return
+    const same = paymentConditions.filter((c) => c.name === condicaoPagamento)
+    if (same.length >= 1) {
+      const pick = [...same].sort((a, b) => a.admin_tier - b.admin_tier)[0]
+      setCondicaoPagamento(formatPaymentConditionSelectValue(pick.id))
+    }
+  }, [modoCondicaoCatalogo, paymentConditions, condicaoPagamento])
+
+  /** Ao abrir pedido/proposta com condição fora do catálogo, admin/supervisor já edita em texto livre. */
+  useEffect(() => {
+    if (!podeCondicaoPersonalizada || condicaoModoInicializadoRef.current) return
+    if (!condicaoPagamento?.trim()) return
+    if (condicaoDespadronizada) {
+      setModoCondicaoCatalogo(false)
+      condicaoModoInicializadoRef.current = true
+    }
+  }, [podeCondicaoPersonalizada, condicaoDespadronizada, condicaoPagamento])
 
   const nomeParcelasFonte = useMemo(() => {
     if (parsePaymentConditionSelectValue(condicaoPagamento) != null) {
@@ -1571,7 +1683,7 @@ export default function PedidoFormPage() {
     <>
       <PageTitle title={headerTitle} subName={isNew ? 'Criação' : 'Edição'} />
 
-      {/* Sessão 1 - Cliente e Vendedor */}
+      {/* Sessão 1 - Cliente e representantes */}
       <Card className="border-0 shadow-sm mb-3">
         <Card.Body>
           <Row className="g-3 align-items-end">
@@ -1624,7 +1736,7 @@ export default function PedidoFormPage() {
                 word-break: break-word;
               }
             `}</style>
-            <Col lg={4}>
+            <Col lg={mostrarDoisCamposRepresentante ? 3 : 4}>
               <Form.Label>Cliente</Form.Label>
               <div className="position-relative">
                 <Form.Control
@@ -1648,9 +1760,9 @@ export default function PedidoFormPage() {
                     ))}
                   </div>
                 )}
-                {meVendedor?.tipo === 'TELEVENDAS' && selectedClient && (
+                {meVendedor?.tipo === 'TELEVENDAS' && selectedClient && !mostrarDoisCamposRepresentante && (
                   <div className="small mt-2">
-                    <span className="text-muted">Vendedor do cliente: </span>
+                    <span className="text-muted">Representante do cliente: </span>
                     <span className="fw-semibold">{selectedClient.nome_vendedor || (selectedClient.id_vendedor_externo ? selectedClient.id_vendedor_externo : '—')}</span>
                     <span className="ms-2">•</span>
                     <span className="ms-2">
@@ -1660,10 +1772,53 @@ export default function PedidoFormPage() {
                 )}
               </div>
             </Col>
-            <Col lg={2}>
-              <Form.Label>Vendedor</Form.Label>
-              <Form.Control type="text" value={meVendedor?.nome || meVendedor?.id_vendedor_externo || ''} disabled />
-            </Col>
+            {mostrarSoUmVendedor && (
+              <Col lg={2}>
+                <Form.Label>Representante</Form.Label>
+                <Form.Control type="text" value={meVendedor?.nome || meVendedor?.id_vendedor_externo || ''} disabled readOnly />
+              </Col>
+            )}
+            {mostrarDoisCamposRepresentante && (meVendedor?.is_admin || meVendedor?.is_supervisor) && (
+              <>
+                <Col lg={2}>
+                  <Form.Label>Representante do pedido</Form.Label>
+                  <Form.Select
+                    value={pedidoRepresentanteExterno}
+                    onChange={(e) => {
+                      setPedidoRepresentanteExterno(e.target.value)
+                      setPedidoRepresentanteNomeCarregado(null)
+                    }}
+                  >
+                    <option value="">Selecione</option>
+                    {pedidoRepSelectOptions.map((o) => (
+                      <option key={o.externo} value={o.externo}>
+                        {o.nome}
+                      </option>
+                    ))}
+                  </Form.Select>
+                </Col>
+                <Col lg={2}>
+                  <Form.Label>Representante da carteira</Form.Label>
+                  <Form.Control
+                    readOnly
+                    disabled
+                    value={carteiraRepresentanteNome || carteiraRepresentanteExterno || '—'}
+                  />
+                </Col>
+              </>
+            )}
+            {mostrarDoisCamposRepresentante && meVendedor?.tipo === 'TELEVENDAS' && (
+              <>
+                <Col lg={2}>
+                  <Form.Label>Representante do pedido</Form.Label>
+                  <Form.Control readOnly disabled value={textoVendedorPedidoSomenteLeitura} />
+                </Col>
+                <Col lg={2}>
+                  <Form.Label>Representante da carteira</Form.Label>
+                  <Form.Control readOnly disabled value={carteiraRepresentanteNome || carteiraRepresentanteExterno || '—'} />
+                </Col>
+              </>
+            )}
             <Col lg={2}>
               <Form.Label>Forma de recebimento</Form.Label>
               <Form.Select value={formaRecebimento} onChange={(e) => { setFormaRecebimento(e.target.value); setCondicaoPagamento(''); setDescontoPercent(0) }}>
@@ -1681,48 +1836,82 @@ export default function PedidoFormPage() {
                 )}
               </Form.Select>
             </Col>
-            <Col lg={4}>
-              <Form.Label>Condição de pagamento</Form.Label>
-              <Form.Select
-                value={condicaoPagamento}
-                onChange={(e) => setCondicaoPagamento(e.target.value)}
-              >
-                <option value="">Selecione</option>
-                {condicaoDespadronizada && condicaoPagamento ? (
-                  <option value={condicaoPagamento}>
-                    {isTinyOrder ? `${condicaoPagamento} (Despadronizado)` : condicaoPagamento}
-                  </option>
+            <Col lg={mostrarDoisCamposRepresentante ? 3 : 4}>
+              <div className="d-flex justify-content-between align-items-center gap-2 mb-1">
+                <Form.Label className="mb-0">Condição de pagamento</Form.Label>
+                {podeCondicaoPersonalizada ? (
+                  <Form.Check
+                    type="switch"
+                    id="condicao-pagamento-livre"
+                    className="mb-0 small"
+                    label="Customizada"
+                    checked={!modoCondicaoCatalogo}
+                    onChange={(e) => {
+                      const livre = e.target.checked
+                      setModoCondicaoCatalogo(!livre)
+                      if (livre) {
+                        if (parsePaymentConditionSelectValue(condicaoPagamento) != null && resolvedCondicao) {
+                          setCondicaoPagamento(resolvedCondicao.name)
+                        }
+                      } else {
+                        setCondicaoPagamento('')
+                      }
+                    }}
+                  />
                 ) : null}
-                {!paymentConditions.some((c) => c.name.trim() === 'À vista') ? (
-                  <option value="À vista">À vista</option>
-                ) : null}
-                {!paymentConditions.some((c) => c.name.trim() === '7 dias') ? (
-                  <option value="7 dias">7 dias</option>
-                ) : null}
-                {PAYMENT_ADMIN_TIER_ORDER.map((tier) => {
-                  const tierConds = paymentConditions.filter((c) => c.admin_tier === tier)
-                  if (tierConds.length === 0) return null
-                  return (
-                    <optgroup key={tier} label={PAYMENT_ADMIN_TIER_LABELS[tier] ?? `Faixa ${tier}`}>
-                      {tierConds.map((c) => {
-                        const minStr =
-                          c.valor_minimo != null && c.valor_minimo > 0
-                            ? Number(c.valor_minimo).toLocaleString('pt-BR', {
-                                minimumFractionDigits: 0,
-                                maximumFractionDigits: 2,
-                              })
-                            : ''
-                        const labelText = minStr !== '' ? `${c.name} (Min. ${minStr})` : c.name
-                        return (
-                          <option key={c.id} value={formatPaymentConditionSelectValue(c.id)}>
-                            {labelText}
-                          </option>
-                        )
-                      })}
-                    </optgroup>
-                  )
-                })}
-              </Form.Select>
+              </div>
+              {podeCondicaoPersonalizada && !modoCondicaoCatalogo ? (
+                <>
+                  <Form.Control
+                    value={condicaoPagamento}
+                    onChange={(e) => setCondicaoPagamento(e.target.value.slice(0, 100))}
+                    placeholder="Ex.: 30/60/90, À vista, 45 dias direto…"
+                    maxLength={100}
+                    autoComplete="off"
+                  />
+                </>
+              ) : (
+                <Form.Select
+                  value={condicaoPagamento}
+                  onChange={(e) => setCondicaoPagamento(e.target.value)}
+                >
+                  <option value="">Selecione</option>
+                  {condicaoDespadronizada && condicaoPagamento ? (
+                    <option value={condicaoPagamento}>
+                      {isTinyOrder ? `${condicaoPagamento} (Despadronizado)` : condicaoPagamento}
+                    </option>
+                  ) : null}
+                  {!paymentConditions.some((c) => c.name.trim() === 'À vista') ? (
+                    <option value="À vista">À vista</option>
+                  ) : null}
+                  {!paymentConditions.some((c) => c.name.trim() === '7 dias') ? (
+                    <option value="7 dias">7 dias</option>
+                  ) : null}
+                  {PAYMENT_ADMIN_TIER_ORDER.map((tier) => {
+                    const tierConds = paymentConditions.filter((c) => c.admin_tier === tier)
+                    if (tierConds.length === 0) return null
+                    return (
+                      <optgroup key={tier} label={PAYMENT_ADMIN_TIER_LABELS[tier] ?? `Faixa ${tier}`}>
+                        {tierConds.map((c) => {
+                          const minStr =
+                            c.valor_minimo != null && c.valor_minimo > 0
+                              ? Number(c.valor_minimo).toLocaleString('pt-BR', {
+                                  minimumFractionDigits: 0,
+                                  maximumFractionDigits: 2,
+                                })
+                              : ''
+                          const labelText = minStr !== '' ? `${c.name} (Min. ${minStr})` : c.name
+                          return (
+                            <option key={c.id} value={formatPaymentConditionSelectValue(c.id)}>
+                              {labelText}
+                            </option>
+                          )
+                        })}
+                      </optgroup>
+                    )
+                  })}
+                </Form.Select>
+              )}
             </Col>
             {/* removed extra placeholder column */}
           </Row>

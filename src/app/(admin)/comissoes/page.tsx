@@ -84,10 +84,12 @@ export default function ComissoesPage() {
   const [rows, setRows] = useState<Linha[]>([])
   const [loading, setLoading] = useState(false)
   const [isAdmin, setIsAdmin] = useState(false)
+  const [isSupervisor, setIsSupervisor] = useState(false)
   const [role, setRole] = useState<'VENDEDOR' | 'TELEVENDAS' | ''>('')
   const [vendorsAll, setVendorsAll] = useState<{ externo: string; nome: string; tipo?: 'VENDEDOR' | 'TELEVENDAS' | null }[]>([])
   const [vendorExterno, setVendorExterno] = useState<string>('')
   const [meVendorId, setMeVendorId] = useState<string>('')
+  const [meVendorNome, setMeVendorNome] = useState<string>('')
   const [selectedCycle, setSelectedCycle] = useState(cycleData.defaultId)
   const [start, setStart] = useState<string>('')
   const [end, setEnd] = useState<string>('')
@@ -96,6 +98,9 @@ export default function ComissoesPage() {
   const [reportCaseC, setReportCaseC] = useState<RelatorioVendedorRow[]>([])
   const [reportLoading, setReportLoading] = useState(false)
   const [showReport, setShowReport] = useState(false)
+  const [accessLoaded, setAccessLoaded] = useState(false)
+
+  const canUseComissaoGestao = isAdmin || isSupervisor
 
   const load = async () => {
     setLoading(true)
@@ -131,21 +136,33 @@ export default function ComissoesPage() {
         const json = await res.json()
         const idExterno = String(json?.data?.id_vendedor_externo || '')
         setIsAdmin(Boolean(json?.ok && json?.data?.is_admin))
+        setIsSupervisor(Boolean(json?.ok && json?.data?.is_supervisor))
         setMeVendorId(idExterno)
-        if (!json?.data?.is_admin && idExterno) {
+        setMeVendorNome(String(json?.data?.nome || ''))
+        const vendedorOnly = !json?.data?.is_admin && !json?.data?.is_supervisor
+        if (vendedorOnly && idExterno) {
           setVendorExterno(idExterno)
         }
       } catch {
         setIsAdmin(false)
+        setIsSupervisor(false)
+      } finally {
+        setAccessLoaded(true)
       }
     })()
 
-    // Load vendors for filter
+    return () => {}
+  }, [])
+
+  useEffect(() => {
+    if (!accessLoaded) return
+    const controller = new AbortController()
     ;(async () => {
       try {
-        const res = await fetch('/api/vendedores')
-        const json = await res.json()
-        if (json?.ok) {
+        if (!canUseComissaoGestao) {
+          const res = await fetch('/api/vendedores', { signal: controller.signal })
+          const json = await res.json().catch(() => null)
+          if (!res.ok || !json?.ok) return
           const opts = (json.data || [])
             .filter((v: any) => !!v.id_vendedor_externo)
             .map((v: any) => ({
@@ -154,10 +171,69 @@ export default function ComissoesPage() {
               tipo: (v.tipo_acesso as any) || null,
             }))
           setVendorsAll(opts)
+          return
         }
-      } catch {}
+
+        if (isSupervisor && meVendorId) {
+          const [supRes, vendRes] = await Promise.all([
+            fetch('/api/supervisores', { signal: controller.signal }),
+            fetch('/api/vendedores', { signal: controller.signal }),
+          ])
+          const supJson = await supRes.json().catch(() => null)
+          const vendJson = await vendRes.json().catch(() => null)
+          if (!supRes.ok || !supJson?.ok || !vendRes.ok || !vendJson?.ok) return
+
+          const allVendedores = Array.isArray(vendJson?.data) ? vendJson.data : []
+          const tipoByExt = new Map(
+            allVendedores
+              .filter((v: any) => v?.id_vendedor_externo)
+              .map((v: any) => [String(v.id_vendedor_externo), (v.tipo_acesso as any) || null])
+          )
+
+          const supRows = Array.isArray(supJson?.data) ? supJson.data : []
+          const currentSup = supRows.find((s: any) => String(s?.id_vendedor_externo || '') === meVendorId)
+          const supervised = Array.isArray(currentSup?.supervised) ? currentSup.supervised : []
+          const mappedSupervised = supervised
+            .filter((v: any) => v?.vendedor_externo)
+            .map((v: any) => {
+              const ext = String(v.vendedor_externo)
+              return {
+                externo: ext,
+                nome: String(v.nome || ext),
+                tipo: tipoByExt.get(ext) ?? null,
+              }
+            })
+          const mapped = [
+            {
+              externo: meVendorId,
+              nome: meVendorNome || meVendorId,
+              tipo: (tipoByExt.get(meVendorId) as any) ?? null,
+            },
+            ...mappedSupervised,
+          ].filter((v) => v.externo)
+
+          const dedup = Array.from(new Map(mapped.map((v) => [v.externo, v])).values())
+          setVendorsAll(dedup)
+          return
+        }
+
+        const res = await fetch('/api/vendedores', { signal: controller.signal })
+        const json = await res.json().catch(() => null)
+        if (!res.ok || !json?.ok) return
+        const opts = (json.data || [])
+          .filter((v: any) => !!v.id_vendedor_externo)
+          .map((v: any) => ({
+            externo: v.id_vendedor_externo as string,
+            nome: v.nome as string,
+            tipo: (v.tipo_acesso as any) || null,
+          }))
+        setVendorsAll(opts)
+      } catch {
+        setVendorsAll([])
+      }
     })()
-  }, [])
+    return () => controller.abort()
+  }, [accessLoaded, canUseComissaoGestao, isAdmin, isSupervisor, meVendorId, meVendorNome])
 
   useEffect(() => {
     if (!selectedCycle) return
@@ -180,11 +256,11 @@ export default function ComissoesPage() {
   }, [vendorsAll, role])
 
   useEffect(() => {
-    if (!isAdmin) return
+    if (!canUseComissaoGestao) return
     if (vendorExterno && !vendorOptions.some((v) => v.externo === vendorExterno)) {
       setVendorExterno('')
     }
-  }, [role, vendorOptions, vendorExterno, isAdmin])
+  }, [role, vendorOptions, vendorExterno, canUseComissaoGestao])
 
   // Auto reload on filter change (after dates are initialized)
   const cycleOptions = cycleData.options
@@ -368,7 +444,7 @@ export default function ComissoesPage() {
       <div className="card mb-3">
         <div className="card-body">
           <div className="row g-2">
-            {isAdmin && (
+            {canUseComissaoGestao && (
               <div className="col-md-2">
                 <label className="form-label">Tipo</label>
                 <select className="form-select" value={role} onChange={(e) => setRole(e.target.value as any)}>
@@ -378,7 +454,7 @@ export default function ComissoesPage() {
                 </select>
               </div>
             )}
-            {isAdmin && (
+            {canUseComissaoGestao && (
               <div className="col-md-3">
                 <label className="form-label">Vendedor</label>
                 <select className="form-select" value={vendorExterno} onChange={(e) => setVendorExterno(e.target.value)}>
@@ -406,7 +482,7 @@ export default function ComissoesPage() {
                 ))}
               </select>
             </div>
-            <div className={isAdmin ? "col-md-3" : "col-md-4"}>
+            <div className={canUseComissaoGestao ? "col-md-3" : "col-md-4"}>
               <label className="form-label">Data inicial</label>
               <input
                 type="date"
@@ -418,7 +494,7 @@ export default function ComissoesPage() {
                 }}
               />
             </div>
-            <div className={isAdmin ? "col-md-4" : "col-md-4"}>
+            <div className={canUseComissaoGestao ? "col-md-4" : "col-md-4"}>
               <label className="form-label">Data final</label>
               <div className="d-flex align-items-center">
                 <input
@@ -430,7 +506,7 @@ export default function ComissoesPage() {
                     setSelectedCycle('')
                   }}
                 />
-                {isAdmin && (
+                {canUseComissaoGestao && (
                   <button className="btn btn-primary ms-2 text-nowrap" onClick={runReport} disabled={reportLoading}>
                     {reportLoading ? 'Gerando...' : 'Relatório Geral'}
                   </button>

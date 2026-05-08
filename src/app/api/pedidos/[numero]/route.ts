@@ -171,6 +171,16 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
       }
     }
 
+    const carteiraExternoRaw = row.client_vendor_externo ?? row.cliente_rel?.id_vendedor_externo ?? null
+    let client_vendor_nome: string | null = null
+    if (carteiraExternoRaw && String(carteiraExternoRaw).trim() !== '') {
+      const vCv = await prisma.vendedor.findFirst({
+        where: { id_vendedor_externo: String(carteiraExternoRaw).trim() },
+        select: { nome: true },
+      })
+      client_vendor_nome = vCv?.nome ?? null
+    }
+
     const data = {
       numero: row.numero,
       data: formatSqlDateOnly(row.data),
@@ -252,6 +262,8 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
         ? 'Dados incompletos'
         : 'Entregue',
       id_vendedor_externo: row.id_vendedor_externo,
+      client_vendor_externo: carteiraExternoRaw ? String(carteiraExternoRaw).trim() : null,
+      client_vendor_nome,
     }
 
     return NextResponse.json({ ok: true, data })

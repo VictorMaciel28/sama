@@ -3,7 +3,7 @@ destinado a fazer inclusão de Pedidos.
 
 REST
 REST URL
-https://api.tiny.com.br/api2/pedido.incluir.php
+[https://api.tiny.com.br/api2/pedido.incluir.php](https://api.tiny.com.br/api2/pedido.incluir.php)
 Parâmetros do serviço
 Elemento	Tipo	Ocorrência	Descrição
 token	string	obrigatório	Chave gerada para identificar sua empresa
@@ -30,7 +30,6 @@ retorno.registros[ ].registro.numero	int	-	condicional	Número do Pedido na Olis
 (1) - Somente estará presente no retorno caso o elemento "status" seja "Erro".
 (2) - Somente estará presente no retorno caso o elemento "status" seja diferente de "OK".
 (3) - Estes campos somente serão informados caso o retorno contenha erros.
-
 
 Exemplos do parâmetro pedido em JSON
 {
@@ -152,12 +151,11 @@ Exemplos do parâmetro pedido em JSON
   }
 }
 
-
 Exemplos da chamada em REST
 
-$url = 'https://api.tiny.com.br/api2/pedido.incluir.php';
+$url = '[https://api.tiny.com.br/api2/pedido.incluir.php](https://api.tiny.com.br/api2/pedido.incluir.php)';
 $token = 'coloque aqui a sua chave da api';
-$pedido = '<pedido>...</pedido>';
+$pedido = '...';
 $data = "token=$token&pedido=$pedido&formato=JSON";
 
 enviarREST($url, $data);    
@@ -184,7 +182,6 @@ function enviarREST($url, $data, $optional_headers = null) {
 	
 	return $response;
 }
-
 
 Exemplos do retorno do serviço em JSON
 {

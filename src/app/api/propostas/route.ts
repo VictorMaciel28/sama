@@ -56,8 +56,16 @@ export async function GET() {
       }
     }
     let rows
+    const proposalInclude = {
+      products: { orderBy: { id: 'asc' as const } },
+    } as const
+
     if (isAdmin) {
-      rows = await prisma.platform_order.findMany({ where: { status: 'PROPOSTA' as any }, orderBy: { created_at: 'desc' } })
+      rows = await prisma.platform_order.findMany({
+        where: { status: 'PROPOSTA' as any },
+        orderBy: { created_at: 'desc' },
+        include: proposalInclude,
+      })
     } else {
       if (!id_vendedor_externo) return NextResponse.json({ ok: true, data: [] })
       rows = await prisma.platform_order.findMany({
@@ -66,39 +74,32 @@ export async function GET() {
           id_vendedor_externo,
         },
         orderBy: { created_at: 'desc' },
+        include: proposalInclude,
       })
     }
 
-    // Include products for each proposal (if any)
-    const data = await Promise.all(
-      rows.map(async (r) => {
-        const products = r.tiny_id
-          ? await prisma.platform_order_product.findMany({ where: { tiny_id: r.tiny_id } as any })
-          : []
-        return {
-          numero: r.numero,
-          data: formatSqlDateOnly(r.data),
-          cliente: r.cliente,
-          cnpj: r.cnpj,
-          total: Number(r.total),
-          status: 'Proposta',
-          forma_recebimento: r.forma_recebimento ?? null,
-          condicao_pagamento: r.condicao_pagamento ?? null,
-          juros_ligado: Boolean(r.juros_ligado ?? true),
-          id_vendedor_externo: r.id_vendedor_externo,
-          /** Necessário ao evoluir proposta → pedido (Tiny exige idContato). */
-          id_client_externo: r.id_client_externo != null ? r.id_client_externo.toString() : null,
-          itens: products.map((p) => ({
-            produtoId: p.produto_id,
-            codigo: p.codigo,
-            nome: p.nome,
-            quantidade: Number(p.quantidade),
-            unidade: p.unidade,
-            preco: Number(p.preco),
-          })),
-        }
-      })
-    )
+    const data = rows.map((r) => ({
+      numero: r.numero,
+      data: formatSqlDateOnly(r.data),
+      cliente: r.cliente,
+      cnpj: r.cnpj,
+      total: Number(r.total),
+      status: 'Proposta',
+      forma_recebimento: r.forma_recebimento ?? null,
+      condicao_pagamento: r.condicao_pagamento ?? null,
+      juros_ligado: Boolean(r.juros_ligado ?? true),
+      id_vendedor_externo: r.id_vendedor_externo,
+      /** Necessário ao evoluir proposta → pedido (Tiny exige idContato). */
+      id_client_externo: r.id_client_externo != null ? r.id_client_externo.toString() : null,
+      itens: (r.products || []).map((p) => ({
+        produtoId: p.produto_id,
+        codigo: p.codigo,
+        nome: p.nome,
+        quantidade: Number(p.quantidade),
+        unidade: p.unidade,
+        preco: Number(p.preco),
+      })),
+    }))
 
     return NextResponse.json({ ok: true, data })
   } catch (error: any) {

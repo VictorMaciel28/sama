@@ -7,6 +7,7 @@ import {
   filtrarPedidosComHistoricoFaturado,
   primeiroFaturadoPorTinyIds,
 } from '@/lib/comissaoFaturamento'
+import { getSupervisorTeamExternos } from '@/lib/comissaoSupervisorTeam'
 
 export async function GET(req: Request) {
   try {
@@ -14,6 +15,8 @@ export async function GET(req: Request) {
     const userEmail = session?.user?.email || null
     let vendedorExterno: string | null = null
     let isAdmin = false
+    let isSupervisor = false
+    let teamExternos: string[] | null = null
     if (userEmail) {
       const vend = await prisma.vendedor.findFirst({ where: { email: userEmail } })
       vendedorExterno = vend?.id_vendedor_externo ?? null
@@ -22,6 +25,10 @@ export async function GET(req: Request) {
           .findUnique({ where: { id_vendedor_externo: vend.id_vendedor_externo } })
           .catch(() => null)
         isAdmin = nivel?.nivel === 'ADMINISTRADOR'
+        isSupervisor = nivel?.nivel === 'SUPERVISOR'
+        if (isSupervisor && vendedorExterno) {
+          teamExternos = await getSupervisorTeamExternos(prisma, vendedorExterno)
+        }
       }
     }
     /** Administrador vê todas as comissões; não exige linha em `vendedor_tipo_acesso`. */
@@ -35,13 +42,25 @@ export async function GET(req: Request) {
     const startStr = (searchParams.get('start') || '').toString().slice(0, 10)
     const endStr = (searchParams.get('end') || '').toString().slice(0, 10)
 
+    if (isSupervisor && vendorExterno && teamExternos && !teamExternos.includes(vendorExterno)) {
+      return NextResponse.json({ ok: false, error: 'Vendedor fora da sua equipe' }, { status: 403 })
+    }
+
     const where: any = {
       status: {
         in: ['FATURADO', 'ENVIADO', 'ENTREGUE'],
       },
       tiny_id: { not: null },
     }
-    if (!isAdmin) {
+    if (isAdmin) {
+      // sem restrição OR — vê todos os pedidos elegíveis
+    } else if (isSupervisor && teamExternos && teamExternos.length > 0) {
+      where.OR = [
+        { id_vendedor_externo: { in: teamExternos } },
+        { client_vendor_externo: { in: teamExternos } },
+        { cliente_rel: { is: { id_vendedor_externo: { in: teamExternos } } } },
+      ]
+    } else if (!isAdmin) {
       where.OR = [
         { id_vendedor_externo: vendedorExterno },
         { client_vendor_externo: vendedorExterno },
@@ -167,13 +186,17 @@ export async function GET(req: Request) {
     }
 
     let data = computed
-    if (!isAdmin && vendorExterno) {
+    if (isSupervisor && teamExternos && teamExternos.length > 0) {
+      const allowed = new Set(teamExternos)
+      data = data.filter((r) => allowed.has(String(r.beneficiary_externo || '')))
+    }
+    if ((isAdmin || isSupervisor) && vendorExterno) {
       data = data.filter((r) => String(r.beneficiary_externo || '') === vendorExterno)
     }
-    if (isAdmin && vendorExterno) {
+    if (!isAdmin && !isSupervisor && vendorExterno) {
       data = data.filter((r) => String(r.beneficiary_externo || '') === vendorExterno)
     }
-    if (isAdmin && (roleParam === 'VENDEDOR' || roleParam === 'TELEVENDAS')) {
+    if ((isAdmin || isSupervisor) && (roleParam === 'VENDEDOR' || roleParam === 'TELEVENDAS')) {
       data = data.filter((r) => r.role === roleParam)
     }
     data = data.sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())

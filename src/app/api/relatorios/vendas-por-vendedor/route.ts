@@ -1,24 +1,70 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { getServerSession } from 'next-auth'
+import { options } from '@/app/api/auth/[...nextauth]/options'
 import {
   aplicarFiltroPeriodoComissaoPorFaturamento,
   filtrarPedidosComHistoricoFaturado,
   primeiroFaturadoPorTinyIds,
 } from '@/lib/comissaoFaturamento'
+import { getSupervisorTeamExternos } from '@/lib/comissaoSupervisorTeam'
 
 export async function GET(req: Request) {
   try {
+    const session = await getServerSession(options as any)
+    const userEmail = session?.user?.email || null
+    if (!userEmail) {
+      return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 })
+    }
+
+    let vendedorExternoSession: string | null = null
+    let isAdmin = false
+    let isSupervisor = false
+    let teamExternos: string[] | null = null
+
+    const vend = await prisma.vendedor.findFirst({ where: { email: userEmail } })
+    vendedorExternoSession = vend?.id_vendedor_externo ?? null
+    if (vend?.id_vendedor_externo) {
+      const nivel = await prisma.vendedor_nivel_acesso
+        .findUnique({ where: { id_vendedor_externo: vend.id_vendedor_externo } })
+        .catch(() => null)
+      isAdmin = nivel?.nivel === 'ADMINISTRADOR'
+      isSupervisor = nivel?.nivel === 'SUPERVISOR'
+      if (isSupervisor && vendedorExternoSession) {
+        teamExternos = await getSupervisorTeamExternos(prisma, vendedorExternoSession)
+      }
+    }
+
+    if (!isAdmin && !isSupervisor) {
+      return NextResponse.json({ ok: false, error: 'Sem permissão para este relatório' }, { status: 403 })
+    }
+
     const { searchParams } = new URL(req.url)
     const roleParam = (searchParams.get('role') || '').toString().trim().toUpperCase()
     const vendorExterno = (searchParams.get('vendor_externo') || '').toString().trim()
     const startStr = (searchParams.get('start') || '').toString().slice(0, 10)
     const endStr = (searchParams.get('end') || '').toString().slice(0, 10)
 
+    if (isSupervisor && vendorExterno && teamExternos && !teamExternos.includes(vendorExterno)) {
+      return NextResponse.json({ ok: false, error: 'Vendedor fora da sua equipe' }, { status: 403 })
+    }
+
+    const beneficiaryTeamOnly: Set<string> | null =
+      isSupervisor && teamExternos && teamExternos.length > 0 ? new Set(teamExternos) : null
+
     const whereBase: any = {
       status: {
         in: ['FATURADO', 'ENVIADO', 'ENTREGUE'],
       },
       tiny_id: { not: null },
+    }
+
+    if (isSupervisor && teamExternos && teamExternos.length > 0) {
+      whereBase.OR = [
+        { id_vendedor_externo: { in: teamExternos } },
+        { client_vendor_externo: { in: teamExternos } },
+        { cliente_rel: { is: { id_vendedor_externo: { in: teamExternos } } } },
+      ]
     }
     const temPeriodo = Boolean(startStr || endStr)
     if (temPeriodo) {
@@ -92,6 +138,7 @@ export async function GET(req: Request) {
       clienteCnpj: string,
     ) => {
       if (!externo) return
+      if (beneficiaryTeamOnly && !beneficiaryTeamOnly.has(externo)) return
       if (vendorExterno && externo !== vendorExterno) return
       const current =
         map.get(externo) || {
