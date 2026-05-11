@@ -1,3 +1,4 @@
+import { existsSync } from 'fs'
 import { tinyV2Post } from '@/lib/tinyOAuth'
 
 function erroTiny(json: unknown): string {
@@ -10,6 +11,67 @@ function validarIdNota(idNota: string): string {
   const id = String(idNota || '').trim()
   if (!id || !/^\d+$/.test(id)) throw new Error('ID da nota fiscal inválido')
   return id
+}
+
+/** Caminhos comuns do Chrome/Chromium em desenvolvimento (puppeteer-core não baixa browser). */
+function candidateChromePaths(): string[] {
+  const out: string[] = []
+  const fromEnv = process.env.PUPPETEER_EXECUTABLE_PATH?.trim() || process.env.CHROME_PATH?.trim()
+  if (fromEnv) out.push(fromEnv)
+  if (process.platform === 'win32') {
+    const la = process.env.LOCALAPPDATA
+    if (la) out.push(`${la}\\Google\\Chrome\\Application\\chrome.exe`)
+    out.push('C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe')
+    out.push('C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe')
+  } else if (process.platform === 'darwin') {
+    out.push('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome')
+    out.push('/Applications/Chromium.app/Contents/MacOS/Chromium')
+  } else {
+    out.push('/usr/bin/google-chrome-stable')
+    out.push('/usr/bin/google-chrome')
+    out.push('/usr/bin/chromium')
+    out.push('/usr/bin/chromium-browser')
+  }
+  return out
+}
+
+type HeadlessOpt = boolean | 'shell'
+
+async function resolvePuppeteerLaunchOptions(): Promise<{
+  executablePath: string
+  args: string[]
+  defaultViewport: { width: number; height: number; deviceScaleFactor?: number } | null
+  headless: HeadlessOpt
+}> {
+  if (process.env.VERCEL) {
+    const chromium = (await import('@sparticuz/chromium')).default
+    return {
+      executablePath: await chromium.executablePath(),
+      args: [...chromium.args],
+      defaultViewport: chromium.defaultViewport,
+      headless: chromium.headless as HeadlessOpt,
+    }
+  }
+
+  const executablePath = candidateChromePaths().find((p) => p && existsSync(p))
+  if (!executablePath) {
+    throw new Error(
+      'Chrome não encontrado para gerar o PDF. Instale o Google Chrome ou defina PUPPETEER_EXECUTABLE_PATH (caminho do chrome.exe / google-chrome). Na Vercel o binário serverless é usado automaticamente.'
+    )
+  }
+
+  return {
+    executablePath,
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      '--disable-dev-shm-usage',
+      '--disable-gpu',
+      '--font-render-hinting=none',
+    ],
+    defaultViewport: null,
+    headless: true,
+  }
 }
 
 /** URL de visualização (HTML DANFE no ERP Olist), não necessariamente PDF. */
@@ -47,32 +109,27 @@ export async function obterCorpoViaTinyNotaFiscalObterLink(idNota: string): Prom
 }
 
 async function renderNfeViewerUrlToPdf(viewerUrl: string): Promise<Buffer> {
-  let puppeteer: typeof import('puppeteer')
+  let puppeteer: typeof import('puppeteer-core')
   try {
-    puppeteer = await import('puppeteer')
+    puppeteer = await import('puppeteer-core')
   } catch {
-    throw new Error(
-      'Não foi possível carregar o Puppeteer (Chromium). Confirme npm install puppeteer e espaço em disco para o browser.'
-    )
+    throw new Error('Não foi possível carregar puppeteer-core. Execute npm install.')
   }
 
-  const executablePath = process.env.PUPPETEER_EXECUTABLE_PATH?.trim() || undefined
+  const launchOpts = await resolvePuppeteerLaunchOptions()
 
   const browser = await puppeteer.default.launch({
-    headless: true,
-    args: [
-      '--no-sandbox',
-      '--disable-setuid-sandbox',
-      '--disable-dev-shm-usage',
-      '--disable-gpu',
-      '--font-render-hinting=none',
-    ],
-    executablePath: executablePath || undefined,
+    headless: launchOpts.headless,
+    args: launchOpts.args,
+    executablePath: launchOpts.executablePath,
+    ...(launchOpts.defaultViewport ? { defaultViewport: launchOpts.defaultViewport } : {}),
   })
 
   try {
     const page = await browser.newPage()
-    await page.setViewport({ width: 1280, height: 1800, deviceScaleFactor: 1 })
+    if (!launchOpts.defaultViewport) {
+      await page.setViewport({ width: 1280, height: 1800, deviceScaleFactor: 1 })
+    }
     await page.setUserAgent(
       'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     )

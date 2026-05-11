@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
 import { obterPdfDanfeNotaFiscalTiny } from '@/lib/tinyNotaFiscalObterLink'
 
+export const maxDuration = 60
+
 /**
  * PDF da DANFE via `nota.fiscal.obter.link.php` do Tiny (HTML no ERP → Chromium `page.pdf()`).
  */

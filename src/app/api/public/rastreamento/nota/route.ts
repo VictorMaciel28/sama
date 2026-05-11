@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server'
 import { tinyV3Fetch } from '@/lib/tinyOAuth'
 import { obterPdfDanfeNotaFiscalTiny } from '@/lib/tinyNotaFiscalObterLink'
 
+export const maxDuration = 60
+
 function extractXmlString(payload: unknown): string | null {
   if (!payload) return null
   const p = payload as Record<string, unknown>
