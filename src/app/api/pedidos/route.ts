@@ -22,6 +22,8 @@ export async function GET(req: Request) {
     const search = (url.searchParams.get('search') || '').trim()
     const statusText = (url.searchParams.get('status') || '').trim()
     const vendedorFiltro = (url.searchParams.get('vendedor') || '').trim()
+    /** Somente administrador: restringe aos pedidos cujo representante está na equipe do supervisor (ele + vinculados). */
+    const supervisorExternoFiltro = (url.searchParams.get('supervisor_externo') || '').trim()
     const dataInicio = (url.searchParams.get('dataInicio') || '').trim()
     const dataFim = (url.searchParams.get('dataFim') || '').trim()
     const sortByRaw = (url.searchParams.get('sortBy') || 'id').trim()
@@ -84,19 +86,49 @@ export async function GET(req: Request) {
     let total = 0
     let totalValor = 0
     if (isAdmin) {
-      if (vendedorFiltro) whereBase.id_vendedor_externo = vendedorFiltro
-      total = await prisma.platform_order.count({ where: whereBase })
-      const agg = await prisma.platform_order.aggregate({
-        where: whereBase,
-        _sum: { total: true },
-      })
-      totalValor = Number(agg?._sum?.total || 0)
-      rows = await prisma.platform_order.findMany({
-        where: whereBase,
-        orderBy: { [orderByField]: sortDir } as any,
-        skip: offset,
-        take: limit,
-      })
+      let skipAdminQuery = false
+      if (supervisorExternoFiltro) {
+        const supRow = await prisma.supervisor.findUnique({
+          where: { id_vendedor_externo: supervisorExternoFiltro },
+          select: { id: true },
+        })
+        const links = supRow
+          ? await prisma.supervisor_vendor_links.findMany({
+              where: { supervisor_id: supRow.id },
+              select: { vendedor_externo: true },
+            })
+          : []
+        const team = Array.from(
+          new Set([supervisorExternoFiltro, ...links.map((l) => l.vendedor_externo)].filter(Boolean) as string[]),
+        )
+        if (vendedorFiltro && !team.includes(vendedorFiltro)) {
+          skipAdminQuery = true
+        } else if (vendedorFiltro) {
+          whereBase.id_vendedor_externo = vendedorFiltro
+        } else {
+          whereBase.id_vendedor_externo = { in: team }
+        }
+      } else if (vendedorFiltro) {
+        whereBase.id_vendedor_externo = vendedorFiltro
+      }
+      if (skipAdminQuery) {
+        rows = []
+        total = 0
+        totalValor = 0
+      } else {
+        total = await prisma.platform_order.count({ where: whereBase })
+        const agg = await prisma.platform_order.aggregate({
+          where: whereBase,
+          _sum: { total: true },
+        })
+        totalValor = Number(agg?._sum?.total || 0)
+        rows = await prisma.platform_order.findMany({
+          where: whereBase,
+          orderBy: { [orderByField]: sortDir } as any,
+          skip: offset,
+          take: limit,
+        })
+      }
     } else if (isSupervisor) {
       if (!id_vendedor_externo) return NextResponse.json({ ok: true, data: [], paginacao: { limit, offset, total: 0 } })
       const sup = await prisma.supervisor.findUnique({
@@ -228,6 +260,7 @@ export async function GET(req: Request) {
         order_vendor_nome: orderVendor ? vendorNameMap.get(orderVendor) || null : null,
         client_vendor_externo: clientVendor,
         client_vendor_nome: clientVendor ? vendorNameMap.get(clientVendor) || null : null,
+        id_nota_fiscal: r.id_nota_fiscal != null && String(r.id_nota_fiscal).trim() !== '' ? String(r.id_nota_fiscal).trim() : null,
       }
     })
 

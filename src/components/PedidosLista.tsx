@@ -55,6 +55,8 @@ type SyncModalState =
    const { showNotification } = useNotificationContext()
    const [itemsProposta, setItemsProposta] = useState<Pedido[]>([])
   const [pdfLoadingPedidoNumero, setPdfLoadingPedidoNumero] = useState<number | null>(null)
+  /** `${numeroPedido}:${idNotaFiscal}` enquanto baixa PDF da NF (link Tiny) */
+  const [nfPdfLoadingKey, setNfPdfLoadingKey] = useState<string | null>(null)
   const [syncModal, setSyncModal] = useState<SyncModalState>(null)
   const [deleteModal, setDeleteModal] = useState<{ mode: 'pedido' | 'proposta'; numero: number } | null>(null)
   const [deleteBusy, setDeleteBusy] = useState(false)
@@ -86,8 +88,12 @@ type SyncModalState =
   const [meVendedorNome, setMeVendedorNome] = useState('')
   const [vendedorFiltro, setVendedorFiltro] = useState('')
   const [vendedoresOptions, setVendedoresOptions] = useState<Array<{ id_vendedor_externo: string; nome: string }>>([])
-  const showOrderVendorColumn = entity === 'pedido' && !isAdmin
-  const extraColumnCount = showOrderVendorColumn ? 1 : 0
+  /** Lista completa de vendedores (admin) para restaurar o filtro ao limpar “Supervisão”. */
+  const [adminVendedoresFull, setAdminVendedoresFull] = useState<Array<{ id_vendedor_externo: string; nome: string }>>([])
+  const [supervisorFiltroExterno, setSupervisorFiltroExterno] = useState('')
+  const [supervisoresRows, setSupervisoresRows] = useState<
+    Array<{ id: number; id_vendedor_externo: string | null; nome: string | null; supervised?: { vendedor_externo: string; nome: string | null }[] }>
+  >([])
   const cycleData = useMemo(() => {
     const formatter = new Intl.DateTimeFormat('pt-BR', { month: 'long' })
     const now = new Date()
@@ -166,11 +172,15 @@ type SyncModalState =
 
   useEffect(() => {
     const canUseVendorFilter = isAdmin || isSupervisor
-    if (!canUseVendorFilter || entity !== 'pedido') return
+    if (!canUseVendorFilter || entity !== 'pedido') {
+      setAdminVendedoresFull([])
+      return
+    }
     const controller = new AbortController()
     ;(async () => {
       try {
         if (isSupervisor && meVendedorExterno) {
+          setAdminVendedoresFull([])
           const [supRes, vendRes] = await Promise.all([
             fetch('/api/supervisores', { signal: controller.signal }),
             fetch('/api/vendedores', { signal: controller.signal }),
@@ -224,12 +234,63 @@ type SyncModalState =
             nome: String(v.nome || v.id_vendedor_externo),
           }))
         setVendedoresOptions(mapped)
+        setAdminVendedoresFull(mapped)
       } catch {
         setVendedoresOptions([])
+        setAdminVendedoresFull([])
       }
     })()
     return () => controller.abort()
   }, [entity, isAdmin, isSupervisor, meVendedorExterno, meVendedorNome])
+
+  useEffect(() => {
+    if (!isAdmin || entity !== 'pedido') {
+      setSupervisoresRows([])
+      return
+    }
+    const ac = new AbortController()
+    ;(async () => {
+      try {
+        const res = await fetch('/api/supervisores', { signal: ac.signal })
+        const json = await res.json().catch(() => null)
+        if (!res.ok || !json?.ok) {
+          setSupervisoresRows([])
+          return
+        }
+        setSupervisoresRows(Array.isArray(json.data) ? json.data : [])
+      } catch {
+        setSupervisoresRows([])
+      }
+    })()
+    return () => ac.abort()
+  }, [isAdmin, entity])
+
+  /** Com “Supervisão” ativa, o filtro “Vendedor” lista só o supervisor e os representantes vinculados. */
+  useEffect(() => {
+    if (!isAdmin || entity !== 'pedido') return
+    if (!supervisorFiltroExterno) {
+      if (adminVendedoresFull.length > 0) setVendedoresOptions(adminVendedoresFull)
+      return
+    }
+    const row = supervisoresRows.find((s) => String(s?.id_vendedor_externo || '') === supervisorFiltroExterno)
+    if (!row?.id_vendedor_externo) return
+    const extNome = new Map(adminVendedoresFull.map((v) => [v.id_vendedor_externo, v.nome]))
+    const supExt = String(row.id_vendedor_externo)
+    const team: { id_vendedor_externo: string; nome: string }[] = [
+      {
+        id_vendedor_externo: supExt,
+        nome: String(row.nome || extNome.get(supExt) || supExt),
+      },
+      ...(Array.isArray(row.supervised) ? row.supervised : []).map((v) => {
+        const ext = String(v?.vendedor_externo || '')
+        return {
+          id_vendedor_externo: ext,
+          nome: String(v?.nome || extNome.get(ext) || ext),
+        }
+      }),
+    ].filter((t) => t.id_vendedor_externo)
+    setVendedoresOptions(Array.from(new Map(team.map((t) => [t.id_vendedor_externo, t])).values()))
+  }, [isAdmin, entity, supervisorFiltroExterno, supervisoresRows, adminVendedoresFull])
 
   const pedidosListaUrl = useMemo(() => {
     if (entity !== 'pedido') return null
@@ -239,6 +300,7 @@ type SyncModalState =
     if (termoBuscaDebounced.trim()) qs.set('search', termoBuscaDebounced.trim())
     if (statusFiltro) qs.set('status', statusFiltro)
     if (vendedorFiltro) qs.set('vendedor', vendedorFiltro)
+    if (isAdmin && supervisorFiltroExterno) qs.set('supervisor_externo', supervisorFiltroExterno)
     if (dataInicio) qs.set('dataInicio', dataInicio)
     if (dataFim) qs.set('dataFim', dataFim)
     qs.set('sortBy', sortBy)
@@ -251,6 +313,8 @@ type SyncModalState =
     termoBuscaDebounced,
     statusFiltro,
     vendedorFiltro,
+    supervisorFiltroExterno,
+    isAdmin,
     dataInicio,
     dataFim,
     sortBy,
@@ -298,7 +362,9 @@ type SyncModalState =
      const atendeBusca = !termo
        || String(p.numero).includes(termo)
        || p.cliente.toLowerCase().includes(termo)
-       || p.cnpj.toLowerCase().includes(termo);
+       || p.cnpj.toLowerCase().includes(termo)
+       || (p.order_vendor_nome && p.order_vendor_nome.toLowerCase().includes(termo))
+       || (p.order_vendor_externo && String(p.order_vendor_externo).toLowerCase().includes(termo));
      const atendeStatus = !statusFiltro || p.status === statusFiltro;
      const atendePeriodo = dentroDoPeriodo(p.data);
      return atendeBusca && atendeStatus && atendePeriodo;
@@ -328,7 +394,7 @@ type SyncModalState =
 
   useEffect(() => {
     setPaginaAtual(1)
-  }, [termoBuscaDebounced, statusFiltro, vendedorFiltro, dataInicio, dataFim, itensPorPagina, sortBy, sortDir])
+  }, [termoBuscaDebounced, statusFiltro, vendedorFiltro, supervisorFiltroExterno, dataInicio, dataFim, itensPorPagina, sortBy, sortDir])
 
   useEffect(() => {
     if (paginaAtual > totalPaginas) setPaginaAtual(totalPaginas)
@@ -375,6 +441,46 @@ type SyncModalState =
       })
     } finally {
       setPdfLoadingPedidoNumero(null)
+    }
+  }
+
+  const handleDownloadNotaFiscalPdf = async (e: React.MouseEvent, p: Pedido) => {
+    e.stopPropagation()
+    const idNota = p.id_nota_fiscal != null ? String(p.id_nota_fiscal).trim() : ''
+    if (!idNota) return
+    const loadKey = `${p.numero}:${idNota}`
+    setNfPdfLoadingKey(loadKey)
+    try {
+      const res = await fetch(`/api/pedidos/nota-fiscal-pdf?id=${encodeURIComponent(idNota)}`)
+      if (!res.ok) {
+        const json = await res.json().catch(() => null)
+        throw new Error((json && typeof json?.error === 'string' && json.error) || 'Falha ao baixar a nota fiscal')
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const cd = res.headers.get('Content-Disposition')
+      const m = cd && /filename="([^"]+)"/.exec(cd)
+      a.download = m?.[1] || `danfe-nfe-${p.numero}-${idNota}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+      URL.revokeObjectURL(url)
+      showNotification({
+        message: `PDF da nota fiscal baixado (pedido #${p.numero}).`,
+        variant: 'success',
+        delay: 4500,
+      })
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Não foi possível baixar o PDF da nota fiscal'
+      showNotification({
+        message: msg,
+        variant: 'danger',
+        delay: 7000,
+      })
+    } finally {
+      setNfPdfLoadingKey(null)
     }
   }
 
@@ -626,6 +732,29 @@ type SyncModalState =
                    ))}
                  </Form.Select>
                </Col>
+              {isAdmin && entity === 'pedido' && (
+                <Col lg={2} md={6}>
+                  <Form.Label>Supervisão</Form.Label>
+                  <Form.Select
+                    value={supervisorFiltroExterno}
+                    onChange={(e) => {
+                      setSupervisorFiltroExterno(e.target.value)
+                      setVendedorFiltro('')
+                    }}
+                  >
+                    <option value="">Todos</option>
+                    {supervisoresRows.map((s) => {
+                      const ext = String(s.id_vendedor_externo || '')
+                      if (!ext) return null
+                      return (
+                        <option key={s.id} value={ext}>
+                          {String(s.nome || ext)}
+                        </option>
+                      )
+                    })}
+                  </Form.Select>
+                </Col>
+              )}
               {(isAdmin || isSupervisor) && (
                 <Col lg={3} md={6}>
                   <Form.Label>Vendedor</Form.Label>
@@ -747,11 +876,11 @@ type SyncModalState =
                     <th role="button" onClick={() => toggleSort('cliente')} style={{ userSelect: 'none' }}>
                       Cliente {sortArrow('cliente')}
                     </th>
-                     <th>CNPJ</th>
-                    {showOrderVendorColumn && <th>Vendedor no Pedido</th>}
-                     <th>Total</th>
-                     <th>Status</th>
-                     <th style={{ width: 110 }}>Ações</th>
+                    {entity === 'pedido' && <th>Representante</th>}
+                    <th>CNPJ</th>
+                    <th>Total</th>
+                    <th>Status</th>
+                    <th style={{ width: 110 }}>Ações</th>
                    </tr>
                  </thead>
                  <tbody>
@@ -780,12 +909,10 @@ type SyncModalState =
                          <td>{p.numero}</td>
                          <td>{formatBrDate(p.data)}</td>
                          <td>{p.cliente}</td>
-                         <td>{p.cnpj}</td>
-                         {showOrderVendorColumn && (
-                           <td>
-                             {p.order_vendor_nome || p.order_vendor_externo || '—'}
-                           </td>
+                         {entity === 'pedido' && (
+                           <td>{p.order_vendor_nome || p.order_vendor_externo || '—'}</td>
                          )}
+                         <td>{p.cnpj}</td>
                          <td>{p.total.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</td>
                          <td>
                           {p.status === 'Faturado' && (<Badge bg="success">{p.status}</Badge>)}
@@ -810,6 +937,24 @@ type SyncModalState =
                                 >
                                   Origem: Tiny
                                 </Button>
+                                {entity === 'pedido' &&
+                                  p.id_nota_fiscal &&
+                                  String(p.id_nota_fiscal).trim() !== '' && (
+                                    <Button
+                                      variant="outline-secondary"
+                                      size="sm"
+                                      className="p-1 lh-1"
+                                      title="Baixar PDF da nota fiscal (Tiny)"
+                                      disabled={nfPdfLoadingKey === `${p.numero}:${String(p.id_nota_fiscal).trim()}`}
+                                      onClick={(e) => handleDownloadNotaFiscalPdf(e, p)}
+                                    >
+                                      {nfPdfLoadingKey === `${p.numero}:${String(p.id_nota_fiscal).trim()}` ? (
+                                        <Spinner animation="border" size="sm" />
+                                      ) : (
+                                        <IconifyIcon icon="ri:file-pdf-2-line" />
+                                      )}
+                                    </Button>
+                                  )}
                                 <Button
                                   variant="outline-secondary"
                                   size="sm"
@@ -820,7 +965,7 @@ type SyncModalState =
                                   {pdfLoadingPedidoNumero === p.numero ? (
                                     <Spinner animation="border" size="sm" />
                                   ) : (
-                                    <IconifyIcon icon="ri:printer-line" />
+                                    <IconifyIcon icon="ri:download-line" />
                                   )}
                                 </Button>
                                 {canTrashPedido && (
@@ -860,7 +1005,7 @@ type SyncModalState =
                                   {pdfLoadingPedidoNumero === p.numero ? (
                                     <Spinner animation="border" size="sm" />
                                   ) : (
-                                    <IconifyIcon icon="ri:printer-line" />
+                                    <IconifyIcon icon="ri:download-line" />
                                   )}
                                 </Button>
                                  {entity === 'proposta' && (
@@ -902,13 +1047,13 @@ type SyncModalState =
                     })
                    ) : (
                      <tr>
-                       <td colSpan={7 + extraColumnCount} className="text-center text-muted py-4">Nenhum {entity === 'proposta' ? 'proposta' : 'pedido'} encontrado com os filtros atuais</td>
+                       <td colSpan={entity === 'pedido' ? 8 : 7} className="text-center text-muted py-4">Nenhum {entity === 'proposta' ? 'proposta' : 'pedido'} encontrado com os filtros atuais</td>
                      </tr>
                    )}
                  </tbody>
                 <tfoot>
                   <tr>
-                    <td colSpan={4 + extraColumnCount} className="text-end fw-semibold">
+                    <td colSpan={entity === 'pedido' ? 5 : 4} className="text-end fw-semibold">
                       Total dos pedidos filtrados
                     </td>
                     <td className="fw-semibold">

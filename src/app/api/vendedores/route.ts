@@ -1,6 +1,9 @@
 import { NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { NivelAcesso } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { encryptPassword, decryptPassword } from '@/lib/crypto'
+import { options } from '@/app/api/auth/[...nextauth]/options'
 
 function emptyToNull(v: unknown): string | null {
   if (v == null) return null
@@ -293,5 +296,82 @@ export async function POST(req: Request) {
     return NextResponse.json({ ok: true })
   } catch (error: any) {
     return NextResponse.json({ ok: false, error: error?.message ?? 'Erro ao salvar vendedor' }, { status: 500 })
+  }
+}
+
+/** Remove o cadastro do SAMA apenas (sem Tiny). Exige administrador. */
+export async function DELETE(req: Request) {
+  try {
+    const session = await getServerSession(options as any)
+    const email = session?.user?.email
+    if (!email) {
+      return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 })
+    }
+    const me = await prisma.vendedor.findFirst({
+      where: { email: email.trim() },
+      select: { id_vendedor_externo: true },
+    })
+    if (!me?.id_vendedor_externo) {
+      return NextResponse.json({ ok: false, error: 'Sem permissão' }, { status: 403 })
+    }
+    const meNivel = await prisma.vendedor_nivel_acesso.findUnique({
+      where: { id_vendedor_externo: me.id_vendedor_externo },
+      select: { nivel: true },
+    })
+    if (meNivel?.nivel !== NivelAcesso.ADMINISTRADOR) {
+      return NextResponse.json({ ok: false, error: 'Apenas administrador pode excluir representantes' }, { status: 403 })
+    }
+
+    const url = new URL(req.url)
+    const id = Number(url.searchParams.get('id') || '')
+    if (!Number.isFinite(id) || id <= 0) {
+      return NextResponse.json({ ok: false, error: 'ID inválido' }, { status: 400 })
+    }
+
+    const row = await prisma.vendedor.findUnique({
+      where: { id },
+      select: { id: true, id_vendedor_externo: true },
+    })
+    if (!row) {
+      return NextResponse.json({ ok: false, error: 'Representante não encontrado' }, { status: 404 })
+    }
+
+    const ext = row.id_vendedor_externo?.trim() || null
+    if (ext) {
+      const isTargetAdmin = await prisma.vendedor_nivel_acesso.findUnique({
+        where: { id_vendedor_externo: ext },
+        select: { nivel: true },
+      })
+      if (isTargetAdmin?.nivel === NivelAcesso.ADMINISTRADOR) {
+        const adminCount = await prisma.vendedor_nivel_acesso.count({
+          where: { nivel: NivelAcesso.ADMINISTRADOR },
+        })
+        if (adminCount <= 1) {
+          return NextResponse.json(
+            { ok: false, error: 'Não é possível excluir o último administrador do sistema' },
+            { status: 400 },
+          )
+        }
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+      if (ext) {
+        await tx.vendedor_tipo_acesso.deleteMany({ where: { id_vendedor_externo: ext } })
+        await tx.vendedor_nivel_acesso.deleteMany({ where: { id_vendedor_externo: ext } })
+        await tx.supervisor_vendor_links.deleteMany({ where: { vendedor_externo: ext } })
+        await tx.vendedor.updateMany({
+          where: { supervisor_responsavel_externo: ext },
+          data: { supervisor_responsavel_externo: null },
+        })
+        await tx.supervisor.deleteMany({ where: { id_vendedor_externo: ext } })
+        await tx.telemarketing.deleteMany({ where: { id_vendedor_externo: ext } })
+      }
+      await tx.vendedor.delete({ where: { id: row.id } })
+    })
+
+    return NextResponse.json({ ok: true })
+  } catch (error: any) {
+    return NextResponse.json({ ok: false, error: error?.message ?? 'Erro ao excluir vendedor' }, { status: 500 })
   }
 }

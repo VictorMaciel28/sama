@@ -27,9 +27,25 @@ export async function GET(req: Request) {
           const nivel = await prisma.vendedor_nivel_acesso.findUnique({ where: { id_vendedor_externo: externo } })
           // Regra solicitada:
           // - ADMINISTRADOR: todos os clientes
+          // - SUPERVISOR: clientes dos representantes vinculados + o próprio supervisor (alinhado a pedidos/comissões)
           // - demais perfis: somente clientes do vendedor logado
           if (nivel?.nivel === 'ADMINISTRADOR') {
             where = undefined
+          } else if (nivel?.nivel === 'SUPERVISOR') {
+            const sup = await prisma.supervisor.findUnique({
+              where: { id_vendedor_externo: externo },
+              select: { id: true },
+            })
+            const links = sup
+              ? await prisma.supervisor_vendor_links.findMany({
+                  where: { supervisor_id: sup.id },
+                  select: { vendedor_externo: true },
+                })
+              : []
+            const allowed = Array.from(
+              new Set([externo, ...links.map((l) => l.vendedor_externo).filter(Boolean)] as string[])
+            )
+            where = { id_vendedor_externo: { in: allowed } }
           } else {
             where = { id_vendedor_externo: externo }
           }

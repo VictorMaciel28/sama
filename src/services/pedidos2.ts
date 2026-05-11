@@ -14,6 +14,8 @@ export interface Pedido {
   order_vendor_nome?: string | null
   client_vendor_externo?: string | null
   client_vendor_nome?: string | null
+  /** ID da nota fiscal na Tiny (Olist), quando vinculado ao pedido. */
+  id_nota_fiscal?: string | null
   forma_recebimento?: string | null
   condicao_pagamento?: string | null
   /** Persistido em platform_order; true = priorizar mínimo com juros na UI/validação. */

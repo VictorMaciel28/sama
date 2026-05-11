@@ -48,6 +48,136 @@ async function fetchJsonCached(url: string, ttlMs = 4000) {
   }
 }
 
+type ClientSuggestion = {
+  id: number
+  external_id?: string | null
+  nome: string
+  cpf_cnpj?: string
+  id_vendedor_externo?: string | null
+  nome_vendedor?: string | null
+  cidade?: string | null
+  endereco?: string | null
+  numero?: string | null
+  complemento?: string | null
+  bairro?: string | null
+  cep?: string | null
+  uf?: string | null
+  fone?: string | null
+  email?: string | null
+  /** Origem da linha na busca paralela (carteira local vs Tiny). */
+  source?: 'local' | 'tiny'
+}
+
+function mapApiClienteToSuggestion(c: any): ClientSuggestion {
+  return {
+    id: Number(c?.id ?? 0),
+    external_id: c?.external_id != null ? String(c.external_id) : c?.id != null ? String(c.id) : null,
+    nome: c?.nome || '',
+    cpf_cnpj: c?.cpf_cnpj || '',
+    id_vendedor_externo: c?.id_vendedor_externo ?? null,
+    nome_vendedor: c?.vendedor?.nome != null ? String(c.vendedor.nome) : c?.nome_vendedor != null ? String(c.nome_vendedor) : null,
+    cidade: c?.cidade ?? null,
+    endereco: c?.endereco ?? null,
+    numero: c?.numero ?? null,
+    complemento: c?.complemento ?? null,
+    bairro: c?.bairro ?? null,
+    cep: c?.cep ?? null,
+    uf: c?.uf ?? null,
+    fone: c?.fone ?? null,
+    email: c?.email ?? null,
+    source: 'local',
+  }
+}
+
+function mapTinyPesquisaToSuggestion(t: {
+  id: number
+  nome: string
+  fantasia?: string | null
+  cpf_cnpj?: string | null
+  cidade?: string | null
+  uf?: string | null
+  nome_vendedor?: string | null
+}): ClientSuggestion {
+  const id = Number(t.id)
+  const ext = String(id)
+  return {
+    id,
+    external_id: ext,
+    nome: (t.nome || '').trim() || `Contato #${id}`,
+    cpf_cnpj: t.cpf_cnpj || undefined,
+    id_vendedor_externo: null,
+    nome_vendedor: t.nome_vendedor != null && String(t.nome_vendedor).trim() !== '' ? String(t.nome_vendedor).trim() : null,
+    cidade: t.cidade ?? null,
+    endereco: null,
+    numero: null,
+    complemento: null,
+    bairro: null,
+    cep: null,
+    uf: t.uf ?? null,
+    source: 'tiny',
+  }
+}
+
+function mergeLocalAndTinySuggestions(localRows: ClientSuggestion[], tinyRows: Parameters<typeof mapTinyPesquisaToSuggestion>[0][]): ClientSuggestion[] {
+  const map = new Map<string, ClientSuggestion>()
+  for (const l of localRows) {
+    const ext = String(l.external_id ?? l.id).trim()
+    if (!ext) continue
+    map.set(ext, { ...l, source: 'local' })
+  }
+  for (const t of tinyRows) {
+    const ext = String(t.id)
+    const tinyS = mapTinyPesquisaToSuggestion(t)
+    const cur = map.get(ext)
+    if (cur) {
+      map.set(ext, {
+        ...cur,
+        source: 'local',
+        nome: cur.nome || tinyS.nome,
+        cpf_cnpj: cur.cpf_cnpj || tinyS.cpf_cnpj,
+        cidade: cur.cidade ?? tinyS.cidade,
+        uf: cur.uf ?? tinyS.uf,
+        nome_vendedor: cur.nome_vendedor ?? tinyS.nome_vendedor,
+      })
+    } else {
+      map.set(ext, tinyS)
+    }
+  }
+  return Array.from(map.values())
+}
+
+/** Vendedor comum: só contatos cuja chave Tiny está na carteira local retornada pela mesma busca. */
+function intersectTinyWithCarteiraSet(localRows: ClientSuggestion[], tinyRows: Parameters<typeof mapTinyPesquisaToSuggestion>[0][]): ClientSuggestion[] {
+  const carteiraExternIds = new Set(
+    localRows.map((r) => String(r.external_id ?? r.id).trim()).filter(Boolean),
+  )
+  const map = new Map<string, ClientSuggestion>()
+  for (const l of localRows) {
+    const ext = String(l.external_id ?? l.id).trim()
+    if (!ext) continue
+    map.set(ext, { ...l, source: 'local' })
+  }
+  for (const t of tinyRows) {
+    const ext = String(t.id)
+    if (!carteiraExternIds.has(ext)) continue
+    const tinyS = mapTinyPesquisaToSuggestion(t)
+    const cur = map.get(ext)
+    if (cur) {
+      map.set(ext, {
+        ...cur,
+        source: 'local',
+        nome: cur.nome || tinyS.nome,
+        cpf_cnpj: cur.cpf_cnpj || tinyS.cpf_cnpj,
+        cidade: cur.cidade ?? tinyS.cidade,
+        uf: cur.uf ?? tinyS.uf,
+      })
+    } else {
+      map.set(ext, tinyS)
+    }
+  }
+  return Array.from(map.values())
+}
+
 export default function PedidoFormPage() {
   const params = useParams()
   const router = useRouter()
@@ -152,24 +282,6 @@ export default function PedidoFormPage() {
   const [showSuggestForItem, setShowSuggestForItem] = useState<Record<number, boolean>>({})
   const debounceTimers = useRef<Record<number, any>>({})
 
-  // Sugestões de clientes + papel do usuário
-  type ClientSuggestion = {
-    id: number
-    external_id?: string | null
-    nome: string
-    cpf_cnpj?: string
-    id_vendedor_externo?: string | null
-    nome_vendedor?: string | null
-    cidade?: string | null
-    endereco?: string | null
-    numero?: string | null
-    complemento?: string | null
-    bairro?: string | null
-    cep?: string | null
-    uf?: string | null
-    fone?: string | null
-    email?: string | null
-  }
   const [clientSuggestions, setClientSuggestions] = useState<ClientSuggestion[]>([])
   const [showClientSuggest, setShowClientSuggest] = useState<boolean>(false)
   const clientDebounceRef = useRef<any>(null)
@@ -234,6 +346,20 @@ export default function PedidoFormPage() {
   const [carteiraRepresentanteExterno, setCarteiraRepresentanteExterno] = useState<string | null>(null)
   const [carteiraRepresentanteNome, setCarteiraRepresentanteNome] = useState<string | null>(null)
   const [representantesPedidoOptions, setRepresentantesPedidoOptions] = useState<{ externo: string; nome: string }[]>([])
+  const [supervisorCarteiraAlert, setSupervisorCarteiraAlert] = useState('')
+
+  /** Supervisor + representantes vinculados (mesma ideia de `allowed` em pedidos). */
+  const carteiraSupervisionadaExternos = useMemo(() => {
+    const s = new Set<string>()
+    if (meVendedor?.is_supervisor && meVendedor.id_vendedor_externo) {
+      s.add(String(meVendedor.id_vendedor_externo).trim())
+    }
+    for (const o of representantesPedidoOptions) {
+      const ext = String(o.externo || '').trim()
+      if (ext) s.add(ext)
+    }
+    return s
+  }, [meVendedor?.is_supervisor, meVendedor?.id_vendedor_externo, representantesPedidoOptions])
 
   /** Perfil admin é necessário para exibir "Salvar alterações" em pedido existente — não pode depender só de `isNew`. */
   useEffect(() => {
@@ -892,29 +1018,63 @@ export default function PedidoFormPage() {
   const onClienteChange = (value: string) => {
     setForm((f) => ({ ...f, cliente: value }))
     setSelectedClient(null)
+    setSupervisorCarteiraAlert('')
     if (clientDebounceRef.current) clearTimeout(clientDebounceRef.current)
     const trimmed = value.trim()
-    if (trimmed.length >= 3) {
+    const digitsBusca = onlyDigits(trimmed)
+    if (trimmed.length >= 3 || digitsBusca.length >= 8) {
       clientDebounceRef.current = setTimeout(async () => {
+        const televendas = meVendedor?.tipo === 'TELEVENDAS'
+        const soVendedor = Boolean(
+          meVendedor && !meVendedor.is_admin && !meVendedor.is_supervisor && meVendedor.tipo !== 'TELEVENDAS',
+        )
         try {
-          const res = await fetch(`/api/clientes?q=${encodeURIComponent(trimmed)}`, { credentials: 'same-origin' })
-          const data = await res.json()
-          console.debug('clientes search res', res.status, data)
-          const options: ClientSuggestion[] = (data?.data || []).map((c: any) => ({
-            id: Number(c?.id ?? 0),
-            external_id: c?.external_id != null ? String(c.external_id) : (c?.id != null ? String(c.id) : null),
-            nome: c?.nome || '',
-            cpf_cnpj: c?.cpf_cnpj || '',
-            id_vendedor_externo: c?.id_vendedor_externo ?? null,
-            nome_vendedor: c?.nome_vendedor ?? null,
-            cidade: c?.cidade ?? null,
-            endereco: c?.endereco ?? null,
-            numero: c?.numero ?? null,
-            complemento: c?.complemento ?? null,
-            bairro: c?.bairro ?? null,
-            cep: c?.cep ?? null,
-            uf: c?.uf ?? null,
-          })).filter((c: ClientSuggestion) => !!c.nome)
+          const tinyUrl = `/api/pedidos/tiny-contatos-pesquisa?q=${encodeURIComponent(trimmed)}`
+          if (!meVendedor) {
+            const localRes = await fetch(`/api/clientes?q=${encodeURIComponent(trimmed)}`, { credentials: 'same-origin' })
+            const localData = await localRes.json().catch(() => null)
+            const localRaw = Array.isArray(localData?.data) ? localData.data : []
+            const options: ClientSuggestion[] = localRaw
+              .map((c: any) => mapApiClienteToSuggestion(c))
+              .filter((c: ClientSuggestion) => !!c.nome)
+            options.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+            setClientSuggestions(options)
+            setShowClientSuggest(options.length > 0)
+            return
+          }
+          if (televendas) {
+            const res = await fetch(tinyUrl, { credentials: 'same-origin' })
+            const data = await res.json()
+            const rows = Array.isArray(data?.data?.contatos) ? data.data.contatos : []
+            const options: ClientSuggestion[] = rows
+              .map((t: any) => mapTinyPesquisaToSuggestion(t))
+              .filter((c: ClientSuggestion) => !!c.nome)
+            options.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
+            setClientSuggestions(options)
+            setShowClientSuggest(options.length > 0)
+            return
+          }
+
+          const localUrl = `/api/clientes?q=${encodeURIComponent(trimmed)}`
+          const [localRes, tinyRes] = await Promise.all([
+            fetch(localUrl, { credentials: 'same-origin' }),
+            fetch(tinyUrl, { credentials: 'same-origin' }),
+          ])
+          const localData = await localRes.json().catch(() => null)
+          const tinyData = await tinyRes.json().catch(() => null)
+          const localRaw = Array.isArray(localData?.data) ? localData.data : []
+          const localOptions: ClientSuggestion[] = localRaw
+            .map((c: any) => mapApiClienteToSuggestion(c))
+            .filter((c: ClientSuggestion) => !!c.nome)
+          const tinyRows = Array.isArray(tinyData?.data?.contatos) ? tinyData.data.contatos : []
+
+          let options: ClientSuggestion[]
+          if (soVendedor) {
+            options = intersectTinyWithCarteiraSet(localOptions, tinyRows)
+          } else {
+            options = mergeLocalAndTinySuggestions(localOptions, tinyRows)
+          }
+          options.sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'))
           setClientSuggestions(options)
           setShowClientSuggest(options.length > 0)
         } catch (e) {
@@ -938,6 +1098,11 @@ export default function PedidoFormPage() {
         : null
     setCarteiraRepresentanteExterno(cvEx)
     setCarteiraRepresentanteNome(opt.nome_vendedor ?? null)
+    if (meVendedor?.is_supervisor && cvEx && !carteiraSupervisionadaExternos.has(cvEx)) {
+      setSupervisorCarteiraAlert('Representante não está na sua carteira de supervisão')
+    } else {
+      setSupervisorCarteiraAlert('')
+    }
     setIsDifferentDeliveryAddress(false)
     setDeliveryAddress({
       endereco: opt.endereco || '',
@@ -954,6 +1119,7 @@ export default function PedidoFormPage() {
   const openNewContact = () => {
     setContactMode('new')
     setContactFormErrors({})
+    setSupervisorCarteiraAlert('')
     setForm((f) => ({ ...f, cliente: '', cnpj: '' }))
     setSelectedClient(null)
     setCarteiraRepresentanteExterno(null)
@@ -1749,7 +1915,7 @@ export default function PedidoFormPage() {
                   <div className="border rounded bg-white shadow position-absolute w-100 mt-1" style={{ zIndex: 2000, maxHeight: 300, overflowY: 'auto' }}>
                     {clientSuggestions.map((opt) => (
                       <div
-                        key={opt.id}
+                        key={`${opt.source ?? 'local'}:${opt.external_id ?? opt.id}`}
                         className="px-2 py-1 hover-bg"
                         style={{ cursor: 'pointer' }}
                         onClick={() => selectCliente(opt)}
@@ -1804,6 +1970,9 @@ export default function PedidoFormPage() {
                     disabled
                     value={carteiraRepresentanteNome || carteiraRepresentanteExterno || '—'}
                   />
+                  {meVendedor?.is_supervisor && supervisorCarteiraAlert ? (
+                    <div className="text-danger small mt-1">{supervisorCarteiraAlert}</div>
+                  ) : null}
                 </Col>
               </>
             )}

@@ -69,6 +69,8 @@ export default function VendedoresPage() {
   const [formObservacao, setFormObservacao] = useState('')
   const [formPassword, setFormPassword] = useState<string>('')
   const [showPassword, setShowPassword] = useState(false)
+  const [isAdminMe, setIsAdminMe] = useState(false)
+  const [deletingId, setDeletingId] = useState<number | null>(null)
 
   const load = async () => {
     setLoading(true)
@@ -100,6 +102,18 @@ export default function VendedoresPage() {
   }
 
   useEffect(() => {
+    ;(async () => {
+      try {
+        const res = await fetch('/api/me/vendedor')
+        const json = await res.json()
+        setIsAdminMe(Boolean(json?.ok && json?.data?.is_admin))
+      } catch {
+        setIsAdminMe(false)
+      }
+    })()
+  }, [])
+
+  useEffect(() => {
     load()
     loadSupervisores()
   }, [])
@@ -117,6 +131,29 @@ export default function VendedoresPage() {
       }
     } finally {
       setSyncing(false)
+    }
+  }
+
+  const onDeleteRepresentante = async (v: Vendedor) => {
+    if (
+      !confirm(
+        `Excluir "${v.nome}" apenas do SAMA?\n\nO cadastro some deste sistema; pedidos, clientes e dados no Tiny ERP não são alterados por esta ação.`,
+      )
+    ) {
+      return
+    }
+    setDeletingId(v.id)
+    try {
+      const res = await fetch(`/api/vendedores?id=${encodeURIComponent(String(v.id))}`, { method: 'DELETE' })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json?.ok) {
+        alert((json && typeof json.error === 'string' && json.error) || 'Não foi possível excluir')
+        return
+      }
+      await load()
+      await loadSupervisores()
+    } finally {
+      setDeletingId(null)
     }
   }
 
@@ -306,16 +343,32 @@ export default function VendedoresPage() {
                       <td>{v.telefone ?? '-'}</td>
                       <td>{v.tipo_acesso ? (v.tipo_acesso === 'TELEVENDAS' ? 'Televendas' : 'Vendedor') : '-'}</td>
                       <td>{nivelLabel(v.nivel_acesso)}</td>
-                      <td>
-                        <button
-                          className="btn btn-sm btn-secondary"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            openEdit(v)
-                          }}
-                        >
-                          Editar
-                        </button>
+                      <td className="text-end" onClick={(e) => e.stopPropagation()}>
+                        <div className="d-inline-flex align-items-center gap-1">
+                          <button
+                            type="button"
+                            className="btn btn-sm btn-secondary"
+                            onClick={() => openEdit(v)}
+                          >
+                            Editar
+                          </button>
+                          {isAdminMe ? (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-danger p-1 lh-1"
+                              title="Excluir do SAMA (sem alterar o Tiny)"
+                              disabled={deletingId === v.id}
+                              onClick={() => onDeleteRepresentante(v)}
+                              aria-label="Excluir representante do SAMA"
+                            >
+                              {deletingId === v.id ? (
+                                <span className="px-1 small">…</span>
+                              ) : (
+                                <IconifyIcon icon="solar:trash-bin-minimalistic-2-broken" className="fs-18 align-middle" />
+                              )}
+                            </button>
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   ))}

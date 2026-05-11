@@ -1,64 +1,79 @@
-Pesquisar Cadastros API 2.0
+# **Pesquisar Cadastros** API 2.0
+
 Serviço destinado a fazer consulta de cadastros (clientes, fornecedores, vendedores, etc.)
 
-REST
+- ++[REST](https://tiny.com.br/api-docs/api2-contatos-pesquisar#rest-service)++
+
 REST URL
-https://api.tiny.com.br/api2/contatos.pesquisa.php
-Parâmetros do serviço
-Elemento	Tipo	Ocorrência	Descrição
-token	string	obrigatório	Chave gerada para identificar sua empresa
-pesquisa	string	obrigatório	Nome ou código (ou parte) do contato que deseja consultar
-formato	string	obrigatório	Formato do retorno (json)
-cpf_cnpj	string	opcional	CPF ou CNPJ do contato que deseja consultar
-idVendedor (1)	int	opcional	Número de identificação do vendedor na Olist
-nomeVendedor (1) (2)	string	opcional	Nome do vendedor na Olist
-situacao (3)	string	opcional	Situação do contato (Ativo ou Excluido)
-pagina (4)	int	opcional	Número da página
-dataCriacao	string	opcional	Data de criação do contato. Formato dd/mm/aaaa hh:mm:ss
-dataMinimaAtualizacao	string	opcional	Data mínima de atualização do contato. Formato dd/mm/aaaa hh:mm:ss
-(1) - Caso o vendedor não seja localizado na Olist a consulta não retornará registros.
-(2) - Este valor será desconsiderado caso seja informado valor para o parâmetro idVendedor.
-(3) - Caso não seja enviado valor neste parâmetro todas as situações serão consideradas.
+
+### **Parâmetros do serviço**
+
+
+| Elemento              | Tipo   | Ocorrência  | Descrição                                                          |
+| --------------------- | ------ | ----------- | ------------------------------------------------------------------ |
+| token                 | string | obrigatório | Chave gerada para identificar sua empresa                          |
+| pesquisa              | string | obrigatório | Nome ou código (ou parte) do contato que deseja consultar          |
+| formato               | string | obrigatório | Formato do retorno (json)                                          |
+| cpf_cnpj              | string | opcional    | CPF ou CNPJ do contato que deseja consultar                        |
+| idVendedor (1)        | int    | opcional    | Número de identificação do vendedor na Olist                       |
+| nomeVendedor (1) (2)  | string | opcional    | Nome do vendedor na Olist                                          |
+| situacao (3)          | string | opcional    | Situação do contato (Ativo ou Excluido)                            |
+| pagina (4)            | int    | opcional    | Número da página                                                   |
+| dataCriacao           | string | opcional    | Data de criação do contato. Formato dd/mm/aaaa hh:mm:ss            |
+| dataMinimaAtualizacao | string | opcional    | Data mínima de atualização do contato. Formato dd/mm/aaaa hh:mm:ss |
+
+
+(1) - Caso o vendedor não seja localizado na Olist a consulta não retornará registros.  
+(2) - Este valor será desconsiderado caso seja informado valor para o parâmetro idVendedor.  
+(3) - Caso não seja enviado valor neste parâmetro todas as situações serão consideradas.  
 (4) - Número da página de contatos que deseja obter (por padrão são listados 100 registros por página), caso não seja informado o valor padrão é 1.
 
-Retorno do serviço
-Elemento	Tipo	Tamanho	Ocorrência	Descrição
-retorno	object	-	obrigatório	Elemento raiz do retorno
-retorno.status_processamento	int	-	obrigatório	Conforme tabela "Status de Processamento"
-retorno.status	string	-	obrigatório	Contém o status do retorno “OK” ou “Erro”. Para o caso de conter erros estes serão descritos abaixo
-retorno.codigo_erro (1)	int	-	condicional	Conforme tabela "Códigos de erro"
-retorno.erros[ ] (1) (3)	list	-	condicional [0..n]	Contém a lista dos erros encontrados.
-retorno.erros[ ].erro	string	-	condicional	Mensagem contendo a descrição do erro
-retorno.pagina	int	-	obrigatório	Número da página que está sendo retornada
-retorno.numero_paginas	int	-	obrigatório	Número de paginas do retorno
-retorno.contatos[ ] (2)	list	-	condicional	Lista de resultados da pesquisa
-retorno.contatos[ ].contato (2)	object	-	condicional	Elemento utilizado para representar um contato.
-retorno.contatos[ ].contato.id	int	-	condicional	Número de identificação do contato na Olist
-retorno.contatos[ ].contato.codigo	string	30	condicional	Código do contato
-retorno.contatos[ ].contato.nome	string	50	condicional	Nome ou razão social do contato
-retorno.contatos[ ].contato.fantasia	string	60	condicional	Nome fatansia do contato
-retorno.contatos[ ].contato.tipo_pessoa	string	1	condicional	Tipo de pessoa (F - Física, J - Jurídica, E - Estrangeiro)
-retorno.contatos[ ].contato.cpf_cnpj	string	18	condicional	CPF ou CNPJ do contato
-retorno.contatos[ ].contato.endereco	string	50	condicional	Endereço do contato
-retorno.contatos[ ].contato.numero	string	10	condicional	Número do endereço do contato
-retorno.contatos[ ].contato.complemento	string	50	condicional	Complemento do endereço do contato
-retorno.contatos[ ].contato.bairro	string	30	condicional	Bairro do contato
-retorno.contatos[ ].contato.cep	string	10	condicional	Cep do contato
-retorno.contatos[ ].contato.cidade	string	30	condicional	Nome da cidade conforme a Tabela de Cidades
-retorno.contatos[ ].contato.uf	string	30	condicional	UF do contato
-retorno.contatos[ ].contato.email	string	50	condicional	E-mail do contato
-retorno.contatos[ ].contato.fone	string	30	condicional	Fone do contato
-retorno.contatos[ ].contato.id_lista_preco	int	-	condicional	Número de identificação da lista de preço na Olist
-retorno.contatos[ ].contato.id_vendedor	int	15	condicional	Número de identificação do vendedor associado ao contato
-retorno.contatos[ ].contato.nome_vendedor	int	15	condicional	Nome do vendedor associado ao contato
-retorno.contatos[ ].contato.situacao	string	15	condicional	Situação do Contato (Ativo,Excluido)
-retorno.contatos[ ].contato.data_criacao	string	19	condicional	Data de criação do contato. Formato dd/mm/aaaa hh:mm:ss
-(1) - Somente estará presente no retorno caso o elemento "status" seja "Erro".
-(2) - Somente estará presente no retorno caso o elemento "status" seja "OK".
+### **Retorno do serviço**
+
+
+| Elemento                                                        | Tipo   | Tamanho | Ocorrência         | Descrição                                                                                                |
+| --------------------------------------------------------------- | ------ | ------- | ------------------ | -------------------------------------------------------------------------------------------------------- |
+| retorno                                                         | object | -       | obrigatório        | Elemento raiz do retorno                                                                                 |
+| retorno.status_processamento                                    | int    | -       | obrigatório        | Conforme tabela "++[Status de Processamento](https://tiny.com.br/api-docs/api2-tabelas-processamento)++" |
+| retorno.status                                                  | string | -       | obrigatório        | Contém o status do retorno “OK” ou “Erro”. Para o caso de conter erros estes serão descritos abaixo      |
+| retorno.codigo_erro (1)                                         | int    | -       | condicional        | Conforme tabela "++[Códigos de erro](https://tiny.com.br/api-docs/api2-tabelas-processamento)++"         |
+| retorno.erros[ ] (1) (3)                                        | list   | -       | condicional [0..n] | Contém a lista dos erros encontrados.                                                                    |
+| retorno.erros[ ].erro                                           | string | -       | condicional        | Mensagem contendo a descrição do erro                                                                    |
+| retorno.pagina                                                  | int    | -       | obrigatório        | Número da página que está sendo retornada                                                                |
+| retorno.numero_paginas                                          | int    | -       | obrigatório        | Número de paginas do retorno                                                                             |
+| retorno.contatos[ ] (2)                                         | list   | -       | condicional        | Lista de resultados da pesquisa                                                                          |
+| retorno.contatos[ ].contato (2)                                 | object | -       | condicional        | Elemento utilizado para representar um contato.                                                          |
+| retorno.contatos[ ].[contato.id](http://contato.id)             | int    | -       | condicional        | Número de identificação do contato na Olist                                                              |
+| retorno.contatos[ ].contato.codigo                              | string | 30      | condicional        | Código do contato                                                                                        |
+| retorno.contatos[ ].contato.nome                                | string | 50      | condicional        | Nome ou razão social do contato                                                                          |
+| retorno.contatos[ ].contato.fantasia                            | string | 60      | condicional        | Nome fatansia do contato                                                                                 |
+| retorno.contatos[ ].contato.tipo_pessoa                         | string | 1       | condicional        | Tipo de pessoa (F - Física, J - Jurídica, E - Estrangeiro)                                               |
+| retorno.contatos[ ].contato.cpf_cnpj                            | string | 18      | condicional        | CPF ou CNPJ do contato                                                                                   |
+| retorno.contatos[ ].contato.endereco                            | string | 50      | condicional        | Endereço do contato                                                                                      |
+| retorno.contatos[ ].contato.numero                              | string | 10      | condicional        | Número do endereço do contato                                                                            |
+| retorno.contatos[ ].contato.complemento                         | string | 50      | condicional        | Complemento do endereço do contato                                                                       |
+| retorno.contatos[ ].contato.bairro                              | string | 30      | condicional        | Bairro do contato                                                                                        |
+| retorno.contatos[ ].contato.cep                                 | string | 10      | condicional        | Cep do contato                                                                                           |
+| retorno.contatos[ ].contato.cidade                              | string | 30      | condicional        | Nome da cidade conforme a ++[Tabela de Cidades](https://tiny.com.br/api-docs/api2-tabelas-municipios)++  |
+| retorno.contatos[ ].contato.uf                                  | string | 30      | condicional        | UF do contato                                                                                            |
+| retorno.contatos[ ].[contato.email](http://contato.email)       | string | 50      | condicional        | E-mail do contato                                                                                        |
+| retorno.contatos[ ].contato.fone                                | string | 30      | condicional        | Fone do contato                                                                                          |
+| retorno.contatos[ ].[contato.id](http://contato.id)_lista_preco | int    | -       | condicional        | Número de identificação da lista de preço na Olist                                                       |
+| retorno.contatos[ ].[contato.id](http://contato.id)_vendedor    | int    | 15      | condicional        | Número de identificação do vendedor associado ao contato                                                 |
+| retorno.contatos[ ].contato.nome_vendedor                       | int    | 15      | condicional        | Nome do vendedor associado ao contato                                                                    |
+| retorno.contatos[ ].contato.situacao                            | string | 15      | condicional        | Situação do Contato (Ativo,Excluido)                                                                     |
+| retorno.contatos[ ].[contato.data](http://contato.data)_criacao | string | 19      | condicional        | Data de criação do contato. Formato dd/mm/aaaa hh:mm:ss                                                  |
+
+
+(1) - Somente estará presente no retorno caso o elemento "status" seja "Erro".  
+(2) - Somente estará presente no retorno caso o elemento "status" seja "OK".  
 (3) - Estes campos somente serão informados caso o retorno contenha erros.
 
-Exemplos de chamada da API
-Exemplos da chamada em REST
+### **Exemplos de chamada da API**
+
+#### **[Exemplos da chamada em REST](https://tiny.com.br/api-docs/api2-contatos-pesquisar#exemplos-chamada-rest)**
+
+```php
 
 $url = 'https://api.tiny.com.br/api2/contatos.pesquisa.php';
 $token = 'coloque aqui a sua chave da api';
@@ -90,8 +105,14 @@ function enviarREST($url, $data, $optional_headers = null) {
 
 	return $response;
 }
-Exemplos de retorno da API
-Exemplos do retorno do serviço em JSON
+
+```
+
+### **Exemplos de retorno da API**
+
+#### **[Exemplos do retorno do serviço em JSON](https://tiny.com.br/api-docs/api2-contatos-pesquisar#exemplos-retorno-json)**
+
+```javascript
 {
   "retorno": {
     "status_processamento": 1,
@@ -104,6 +125,9 @@ Exemplos do retorno do serviço em JSON
     ]
   }
 }
+```
+
+```javascript
 {
   "retorno": {
     "status_processamento": 2,
@@ -116,6 +140,9 @@ Exemplos do retorno do serviço em JSON
     ]
   }
 }
+```
+
+```javascript
 {
   "retorno": {
     "status_processamento": 3,
@@ -170,3 +197,5 @@ Exemplos do retorno do serviço em JSON
     ]
   }
 }
+```
+

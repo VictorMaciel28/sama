@@ -4,6 +4,46 @@ function tinyRetornoOk(data: unknown): boolean {
   return String((data as any)?.retorno?.status ?? '').toUpperCase() === 'OK'
 }
 
+export type TinyContatosPesquisaPageResult = {
+  contatos: Record<string, unknown>[]
+  pagina: number
+  numero_paginas: number
+}
+
+/** Uma página de `contatos.pesquisa.php` (API 2.0). Sem registros retorna lista vazia. */
+export async function tinyContatosPesquisaPage(options: {
+  pesquisa: string
+  pagina?: number
+  cpf_cnpj?: string
+}): Promise<TinyContatosPesquisaPageResult> {
+  const pesq = String(options.pesquisa || '').trim().slice(0, 100) || ' '
+  const body: Record<string, string | number> = {
+    pesquisa: pesq,
+    pagina: options.pagina != null && Number(options.pagina) > 0 ? Number(options.pagina) : 1,
+  }
+  const cpf = String(options.cpf_cnpj || '').replace(/\D/g, '')
+  if (cpf.length >= 8) body.cpf_cnpj = cpf.slice(0, 18)
+
+  const data = await tinyV2Post('contatos.pesquisa.php', body)
+  const retorno = (data as any)?.retorno
+  if (!tinyRetornoOk(data)) {
+    const msg = Array.isArray(retorno?.erros) ? String(retorno.erros[0]?.erro || '') : ''
+    if (/não retornou registros|nao retornou registros|sem registros|não encontrou|nao encontrou/i.test(msg)) {
+      return { contatos: [], pagina: 1, numero_paginas: 1 }
+    }
+    throw new Error(msg || 'contatos.pesquisa Tiny não retornou OK')
+  }
+  const raw = Array.isArray(retorno?.contatos) ? retorno.contatos : []
+  const contatos = raw
+    .map((row: any) => (row?.contato && typeof row.contato === 'object' ? row.contato : row))
+    .filter((ct: any) => ct && (ct.id != null || ct.nome))
+  return {
+    contatos,
+    pagina: Math.max(1, Number(retorno?.pagina || 1)),
+    numero_paginas: Math.max(1, Number(retorno?.numero_paginas || 1)),
+  }
+}
+
 export async function tinyContatosPesquisa(pesquisa: string, pagina = 1) {
   const data = await tinyV2Post('contatos.pesquisa.php', {
     pesquisa: pesquisa.trim(),

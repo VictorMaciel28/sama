@@ -1,4 +1,4 @@
-Get para https://api.tiny.com.br/public-api/v3/pedidos/{idPedido}
+Get para [https://api.tiny.com.br/public-api/v3/pedidos/{idPedido}](https://api.tiny.com.br/public-api/v3/pedidos/{idPedido})
 
 Resposta:
 
