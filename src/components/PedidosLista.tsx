@@ -687,6 +687,7 @@ type SyncModalState =
         compactRight
         actions={
           <div className="d-flex align-items-center gap-2">
+            {/* Botão “Sincronizar Pedidos” (Tiny) — temporariamente desativado
             {entity === 'pedido' && (
               <>
                 <Button size="sm" variant="outline-primary" onClick={openSyncModal} disabled={syncBusy}>
@@ -701,6 +702,7 @@ type SyncModalState =
                 </Button>
               </>
             )}
+            */}
             <Button size="sm" onClick={() => router.push(newPath)}>
               Novo {entity === 'proposta' ? 'Proposta' : 'Pedido'}
             </Button>

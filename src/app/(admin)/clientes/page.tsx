@@ -117,9 +117,11 @@ export default function ClientesPage() {
               >
                 Próxima
               </button>
+              {/* Botão “Atualizar Clientes” (Tiny) — temporariamente desativado
               <button className="btn btn-primary" onClick={onSync} disabled={syncing}>
                 {syncing ? 'Atualizando...' : 'Atualizar Clientes'}
               </button>
+              */}
             </div>
           </div>
 
