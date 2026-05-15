@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
 import { formatSqlDateOnly, parseYmdToSqlDate, todayCalendarYmdUtc } from '@/lib/calendarDate'
+import { findVendedorForAuthSession } from '@/lib/vendedorFromSession'
 
 function pickStr(body: Record<string, unknown>, key: string, maxLen: number): string | null {
   const v = body[key]
@@ -37,21 +38,18 @@ function resolveCondicaoPagamento(body: Record<string, unknown>): string | null 
   return null
 }
 
-async function resolveSessionVendorAndAdmin(userEmail: string | null): Promise<{
+async function resolveSessionVendorAndAdmin(sessionUser: { id?: string; email?: string | null }): Promise<{
   vendedorExterno: string | null
   isAdmin: boolean
 }> {
-  let vendedorExterno: string | null = null
+  const vend = await findVendedorForAuthSession(sessionUser)
+  const vendedorExterno = vend?.id_vendedor_externo ?? null
   let isAdmin = false
-  if (userEmail) {
-    const vend = await prisma.vendedor.findFirst({ where: { email: userEmail } })
-    vendedorExterno = vend?.id_vendedor_externo ?? null
-    if (vend?.id_vendedor_externo) {
-      const nivel = await prisma.vendedor_nivel_acesso
-        .findUnique({ where: { id_vendedor_externo: vend.id_vendedor_externo } })
-        .catch(() => null)
-      if (nivel?.nivel === 'ADMINISTRADOR') isAdmin = true
-    }
+  if (vend?.id_vendedor_externo) {
+    const nivel = await prisma.vendedor_nivel_acesso
+      .findUnique({ where: { id_vendedor_externo: vend.id_vendedor_externo } })
+      .catch(() => null)
+    if (nivel?.nivel === 'ADMINISTRADOR') isAdmin = true
   }
   return { vendedorExterno, isAdmin }
 }
@@ -65,7 +63,7 @@ export async function PATCH(req: Request, { params }: { params: { numero: string
     const numero = Number(params?.numero || 0)
     if (!numero) return NextResponse.json({ ok: false, error: 'Número inválido' }, { status: 400 })
 
-    const { vendedorExterno, isAdmin } = await resolveSessionVendorAndAdmin(session.user.email || null)
+    const { vendedorExterno, isAdmin } = await resolveSessionVendorAndAdmin(session.user)
     if (!vendedorExterno && !isAdmin) return NextResponse.json({ ok: false, error: 'Usuário não é vendedor autenticado' }, { status: 401 })
 
     const existing = await prisma.platform_order.findUnique({ where: { numero } })

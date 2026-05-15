@@ -81,6 +81,21 @@ export async function GET(req: Request) {
       if (dataFim) whereBase.data.lte = new Date(dataFim)
     }
 
+    async function idsEquipeSupervisor(idVendedorExterno: string): Promise<string[]> {
+      const supRow = await prisma.supervisor.findUnique({
+        where: { id_vendedor_externo: idVendedorExterno },
+        select: { id: true },
+      })
+      if (!supRow) return [idVendedorExterno]
+      const links = await prisma.supervisor_vendor_links.findMany({
+        where: { supervisor_id: supRow.id },
+        select: { vendedor_externo: true },
+      })
+      return Array.from(
+        new Set([idVendedorExterno, ...links.map((l) => l.vendedor_externo)].filter(Boolean) as string[]),
+      )
+    }
+
     // If admin, return filtered/paged orders
     let rows: any[] = []
     let total = 0
@@ -88,19 +103,7 @@ export async function GET(req: Request) {
     if (isAdmin) {
       let skipAdminQuery = false
       if (supervisorExternoFiltro) {
-        const supRow = await prisma.supervisor.findUnique({
-          where: { id_vendedor_externo: supervisorExternoFiltro },
-          select: { id: true },
-        })
-        const links = supRow
-          ? await prisma.supervisor_vendor_links.findMany({
-              where: { supervisor_id: supRow.id },
-              select: { vendedor_externo: true },
-            })
-          : []
-        const team = Array.from(
-          new Set([supervisorExternoFiltro, ...links.map((l) => l.vendedor_externo)].filter(Boolean) as string[]),
-        )
+        const team = await idsEquipeSupervisor(supervisorExternoFiltro)
         if (vendedorFiltro && !team.includes(vendedorFiltro)) {
           skipAdminQuery = true
         } else if (vendedorFiltro) {
@@ -109,7 +112,8 @@ export async function GET(req: Request) {
           whereBase.id_vendedor_externo = { in: team }
         }
       } else if (vendedorFiltro) {
-        whereBase.id_vendedor_externo = vendedorFiltro
+        const team = await idsEquipeSupervisor(vendedorFiltro)
+        whereBase.id_vendedor_externo = { in: team }
       }
       if (skipAdminQuery) {
         rows = []

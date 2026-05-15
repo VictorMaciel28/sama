@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
 import { formatSqlDateOnly, parseYmdToSqlDate, todayCalendarYmdUtc } from '@/lib/calendarDate'
+import { findVendedorForAuthSession } from '@/lib/vendedorFromSession'
 
 function pickStr(body: Record<string, unknown>, key: string, maxLen: number): string | null {
   const v = body[key]
@@ -43,17 +44,14 @@ export async function GET() {
     const session = (await getServerSession(options as any)) as any
     if (!session?.user?.id) return NextResponse.json({ ok: true, data: [] })
 
-    const userEmail = session.user.email || null
-    // Resolve external vendor for this session user.
-    let id_vendedor_externo: string | null = null
+    const vendRecord = await findVendedorForAuthSession(session.user)
+    const id_vendedor_externo = vendRecord?.id_vendedor_externo ?? null
     let isAdmin = false
-    if (userEmail) {
-      const vendRecord = await prisma.vendedor.findFirst({ where: { email: userEmail } })
-      id_vendedor_externo = vendRecord?.id_vendedor_externo ?? null
-      if (vendRecord?.id_vendedor_externo) {
-        const nivel = await prisma.vendedor_nivel_acesso.findUnique({ where: { id_vendedor_externo: vendRecord.id_vendedor_externo } }).catch(() => null)
-        if (nivel?.nivel === 'ADMINISTRADOR') isAdmin = true
-      }
+    if (vendRecord?.id_vendedor_externo) {
+      const nivel = await prisma.vendedor_nivel_acesso
+        .findUnique({ where: { id_vendedor_externo: vendRecord.id_vendedor_externo } })
+        .catch(() => null)
+      if (nivel?.nivel === 'ADMINISTRADOR') isAdmin = true
     }
     let rows
     const proposalInclude = {
@@ -111,13 +109,8 @@ export async function POST(req: Request) {
   try {
     const session = (await getServerSession(options as any)) as any
     if (!session?.user?.id) return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 })
-    const userEmail = session.user.email || null
-    // Resolve vendedor externo for this session user
-    let vendedorExternoFromSession: string | null = null
-    if (userEmail) {
-      const vend = await prisma.vendedor.findFirst({ where: { email: userEmail } })
-      vendedorExternoFromSession = vend?.id_vendedor_externo ?? null
-    }
+    const vend = await findVendedorForAuthSession(session.user)
+    const vendedorExternoFromSession = vend?.id_vendedor_externo ?? null
     if (!vendedorExternoFromSession) return NextResponse.json({ ok: false, error: 'Usuário não é vendedor autenticado' }, { status: 401 })
 
     const body = (await req.json()) as Record<string, unknown>
@@ -251,17 +244,14 @@ export async function DELETE(req: Request) {
     const session = (await getServerSession(options as any)) as any
     if (!session?.user?.id) return NextResponse.json({ ok: false, error: 'Não autenticado' }, { status: 401 })
 
-    // resolve vendedor/admin
-    const userEmail = session.user.email || null
-    let vendedorExterno: string | null = null
+    const vend = await findVendedorForAuthSession(session.user)
+    const vendedorExterno = vend?.id_vendedor_externo ?? null
     let isAdmin = false
-    if (userEmail) {
-      const vend = await prisma.vendedor.findFirst({ where: { email: userEmail } })
-      vendedorExterno = vend?.id_vendedor_externo ?? null
-      if (vend?.id_vendedor_externo) {
-        const nivel = await prisma.vendedor_nivel_acesso.findUnique({ where: { id_vendedor_externo: vend.id_vendedor_externo } }).catch(() => null)
-        if (nivel?.nivel === 'ADMINISTRADOR') isAdmin = true
-      }
+    if (vend?.id_vendedor_externo) {
+      const nivel = await prisma.vendedor_nivel_acesso
+        .findUnique({ where: { id_vendedor_externo: vend.id_vendedor_externo } })
+        .catch(() => null)
+      if (nivel?.nivel === 'ADMINISTRADOR') isAdmin = true
     }
     if (!vendedorExterno && !isAdmin) return NextResponse.json({ ok: false, error: 'Usuário sem permissão' }, { status: 403 })
 

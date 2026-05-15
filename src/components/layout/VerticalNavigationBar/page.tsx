@@ -30,7 +30,7 @@ const page = async () => {
   }
 
   const menuItems = getMenuItems().filter((item) => {
-    if (item.key === 'administracao' || item.key === 'suprimentos') {
+    if (item.key === 'administracao' || item.key === 'suprimentos' || item.key === 'financeiro') {
       return nivel === 'ADMINISTRADOR'
     }
     if (item.key === 'supervisao') {

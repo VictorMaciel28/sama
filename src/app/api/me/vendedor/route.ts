@@ -2,16 +2,30 @@ import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
+import { findVendedorForAuthSession } from '@/lib/vendedorFromSession'
 
 export async function GET() {
   try {
     const session = await getServerSession(options as any)
-    const email = session?.user?.email || null
-    if (!email) return NextResponse.json({ ok: true, data: null })
+    if (!session?.user) return NextResponse.json({ ok: true, data: null })
 
-    const vend = await prisma.vendedor.findFirst({ where: { email } })
-    if (!vend?.id_vendedor_externo) {
-      return NextResponse.json({ ok: true, data: { email, tipo: null } })
+    const vend = await findVendedorForAuthSession(session.user)
+    if (!vend) return NextResponse.json({ ok: true, data: null })
+
+    const email = session.user.email || vend.email || null
+    if (!vend.id_vendedor_externo) {
+      return NextResponse.json({
+        ok: true,
+        data: {
+          email,
+          id_vendedor_externo: null,
+          nome: vend.nome,
+          tipo: null,
+          is_admin: false,
+          is_supervisor: false,
+          cidades: [],
+        },
+      })
     }
 
     const externo = vend.id_vendedor_externo

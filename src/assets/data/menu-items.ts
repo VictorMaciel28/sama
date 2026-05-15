@@ -91,6 +91,20 @@ export const MENU_ITEMS: MenuItemType[] = [
       },
     ],
   },
+  {
+    key: 'financeiro',
+    label: 'Financeiro',
+    icon: 'ri:wallet-3-line',
+    children: [
+      {
+        key: 'financeiro-a-pagar',
+        label: 'A pagar',
+        icon: 'ri:bank-card-line',
+        url: '/financeiro/a-pagar',
+        parentKey: 'financeiro',
+      },
+    ],
+  },
   // {
   //   key: 'whatsapp',
   //   label: 'WhatsApp',
