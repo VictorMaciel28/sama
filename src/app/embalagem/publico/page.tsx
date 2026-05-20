@@ -2,7 +2,6 @@ import type { Metadata } from 'next'
 import { verifyEmbalagemPublicQuery } from '@/lib/embalagemPublicLink'
 import { getEmbalagemPublicoPayload } from '@/lib/embalagemPublicoQuery'
 import Link from 'next/link'
-import { Badge, Card, Col, Row, Table } from 'react-bootstrap'
 
 export const metadata: Metadata = {
   title: 'Dados da embalagem',
@@ -18,12 +17,12 @@ function formatCnpjDisplay(cnpj: string) {
 function ErrorPanel({ title, message }: { title: string; message: string }) {
   return (
     <div className="container px-3" style={{ maxWidth: '480px' }}>
-      <Card className="border-0 shadow rounded-4 overflow-hidden">
-        <Card.Body className="p-4 p-md-5 text-center">
+      <div className="card border-0 shadow rounded-4 overflow-hidden">
+        <div className="card-body p-4 p-md-5 text-center">
           <div className="text-danger fw-semibold mb-2">{title}</div>
           <p className="text-muted small mb-0">{message}</p>
-        </Card.Body>
-      </Card>
+        </div>
+      </div>
     </div>
   )
 }
@@ -72,10 +71,9 @@ export default async function EmbalagemPublicoPage({
           </Link>
         </div>
 
-        <Card className="emb-publico-sheet border-0 shadow-lg rounded-4 overflow-hidden">
-          <Card.Header
-            as="div"
-            className="emb-publico-no-print border-0 py-4 px-4 px-md-5 text-white"
+        <div className="card emb-publico-sheet border-0 shadow-lg rounded-4 overflow-hidden">
+          <div
+            className="emb-publico-no-print card-header border-0 py-4 px-4 px-md-5 text-white rounded-0"
             style={{
               background: 'linear-gradient(135deg, #1e3a5f 0%, #2c5282 45%, #3182ce 100%)',
             }}
@@ -87,26 +85,24 @@ export default async function EmbalagemPublicoPage({
                 </div>
                 <h1 className="h4 mb-0 fw-semibold">Embalagem</h1>
               </div>
-              <Badge bg="light" text="dark" className="fs-6 px-3 py-2 rounded-pill">
-                #{data.id}
-              </Badge>
+              <span className="badge bg-light text-dark fs-6 px-3 py-2 rounded-pill">#{data.id}</span>
             </div>
-          </Card.Header>
+          </div>
 
-          <Card.Body className="p-4 p-md-5">
+          <div className="card-body p-4 p-md-5">
             <section className="mb-4 pb-4 border-bottom">
               <div className="text-uppercase text-muted fw-semibold small mb-2" style={{ letterSpacing: '0.06em' }}>
                 Empresa origem
               </div>
-              <Row className="g-2 align-items-baseline">
-                <Col xs={12}>
+              <div className="row g-2 align-items-baseline">
+                <div className="col-12">
                   <span className="fs-5 fw-semibold text-dark">{data.empresa.nome}</span>
-                </Col>
-                <Col xs={12}>
+                </div>
+                <div className="col-12">
                   <span className="text-muted">CNPJ </span>
                   <span className="font-monospace text-body">{formatCnpjDisplay(data.empresa.cnpj)}</span>
-                </Col>
-              </Row>
+                </div>
+              </div>
             </section>
 
             {data.pedidos.map((p) => (
@@ -125,8 +121,8 @@ export default async function EmbalagemPublicoPage({
                   <h2 className="h5 mb-0 fw-semibold text-dark">Pedido {p.numero}</h2>
                 </div>
 
-                <Card className="border-0 bg-light rounded-3 mb-3">
-                  <Card.Body className="p-3 p-md-4">
+                <div className="card border-0 bg-light rounded-3 mb-3">
+                  <div className="card-body p-3 p-md-4">
                     <div className="text-uppercase text-muted fw-semibold small mb-2" style={{ letterSpacing: '0.06em' }}>
                       Cliente
                     </div>
@@ -134,38 +130,40 @@ export default async function EmbalagemPublicoPage({
                     <div className="small text-muted">
                       CNPJ <span className="font-monospace text-body">{formatCnpjDisplay(p.cliente_cnpj)}</span>
                     </div>
-                  </Card.Body>
-                </Card>
+                  </div>
+                </div>
 
                 <div className="text-uppercase text-muted fw-semibold small mb-2" style={{ letterSpacing: '0.06em' }}>
                   Materiais
                 </div>
                 <div className="rounded-3 border overflow-hidden bg-white">
-                  <Table responsive hover size="sm" className="mb-0 align-middle emb-publico-table">
-                    <thead className="table-light">
-                      <tr className="small text-muted text-uppercase" style={{ fontSize: '0.65rem', letterSpacing: '0.05em' }}>
-                        <th className="border-0 py-2 ps-3">Código</th>
-                        <th className="border-0 py-2">Descrição</th>
-                        <th className="border-0 py-2 text-end pe-3" style={{ width: '6.5rem' }}>
-                          Qtd
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {p.materiais.map((m, i) => (
-                        <tr key={i}>
-                          <td className="ps-3 py-2 font-monospace small text-secondary text-break" style={{ maxWidth: '8rem' }}>
-                            {m.codigo ?? '—'}
-                          </td>
-                          <td className="py-2 text-break">{m.nome}</td>
-                          <td className="text-end pe-3 py-2 text-nowrap fw-semibold">
-                            {m.quantidade}
-                            {m.unidade ? <span className="text-muted fw-normal"> {m.unidade}</span> : null}
-                          </td>
+                  <div className="table-responsive">
+                    <table className="table table-sm table-hover mb-0 align-middle emb-publico-table">
+                      <thead className="table-light">
+                        <tr className="small text-muted text-uppercase" style={{ fontSize: '0.65rem', letterSpacing: '0.05em' }}>
+                          <th className="border-0 py-2 ps-3">Código</th>
+                          <th className="border-0 py-2">Descrição</th>
+                          <th className="border-0 py-2 text-end pe-3" style={{ width: '6.5rem' }}>
+                            Qtd
+                          </th>
                         </tr>
-                      ))}
-                    </tbody>
-                  </Table>
+                      </thead>
+                      <tbody>
+                        {p.materiais.map((m, i) => (
+                          <tr key={i}>
+                            <td className="ps-3 py-2 font-monospace small text-secondary text-break" style={{ maxWidth: '8rem' }}>
+                              {m.codigo ?? '—'}
+                            </td>
+                            <td className="py-2 text-break">{m.nome}</td>
+                            <td className="text-end pe-3 py-2 text-nowrap fw-semibold">
+                              {m.quantidade}
+                              {m.unidade ? <span className="text-muted fw-normal"> {m.unidade}</span> : null}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
                 </div>
               </section>
             ))}
@@ -173,8 +171,8 @@ export default async function EmbalagemPublicoPage({
             <p className="small text-muted emb-publico-no-print mb-0 pt-2 border-top">
               Documento informativo para conferência de carga. Imprima pelo navegador se precisar de cópia em papel.
             </p>
-          </Card.Body>
-        </Card>
+          </div>
+        </div>
       </div>
     </>
   )
