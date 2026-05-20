@@ -133,6 +133,27 @@ export const MENU_ITEMS: MenuItemType[] = [
     ],
   },
   {
+    key: 'estoque',
+    label: 'Estoque',
+    icon: 'ri:stack-line',
+    children: [
+      {
+        key: 'estoque-separacao',
+        label: 'Separação',
+        icon: 'ri:split-cells-horizontal',
+        url: '/estoque/separacao',
+        parentKey: 'estoque',
+      },
+      {
+        key: 'estoque-embalagem',
+        label: 'Embalagem',
+        icon: 'ri:gift-line',
+        url: '/estoque/embalagem',
+        parentKey: 'estoque',
+      },
+    ],
+  },
+  {
     key: 'comissoes',
     label: 'Comissões',
     icon: 'ri:money-dollar-circle-line',

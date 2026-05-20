@@ -28,7 +28,10 @@ model vendedor {
   /** ID externo do supervisor cadastrado em `supervisor`. */
   supervisor_responsavel_externo String? @db.VarChar(100)
   observacao                    String? @db.Text
-  clientes  cliente[]
+  clientes                      cliente[]
+  separacoes_colaborador        stock_separation[] @relation("SepColaborador")
+  separacoes_embalagem_iniciada stock_separation[] @relation("SepEmbalagemIniciada")
+  separacoes_embalagem_finalizada stock_separation[] @relation("SepEmbalagemFinalizada")
 
   @@index([tiny_id], map: "idx_vendedor_tiny_id")
   @@index([id_vendedor_externo], map: "idx_vendedor_external_id")
@@ -194,6 +197,7 @@ model platform_order {
   commissions          platform_commission[]
   products             platform_order_product[]
   envios               platform_order_envio[]
+  stock_separation_orders stock_separation_order[] @relation("StockSeparationOrderPedido")
 }
 
 model platform_order_status_history {
@@ -704,4 +708,48 @@ model revisar_pedido_solicitacao_anexo {
 
   @@unique([solicitacao_id, ordem], map: "uk_revisar_pedido_anexo_ordem")
   @@index([solicitacao_id], map: "idx_revisar_pedido_anexo_sol")
+}
+
+enum SeparacaoStatus {
+  SEPARANDO
+  SEPARADO
+  CONCLUIDO
+}
+
+/// Agrupamento de pedidos para separação física (estoque).
+model stock_separation {
+  id                   Int               @id @default(autoincrement())
+  status               SeparacaoStatus   @default(SEPARANDO)
+  id_vendedor_externo  String?           @db.VarChar(100)
+  /// Vendedor logado que criou/conduz a separação (tabela local `vendedor`).
+  separacao_vendedor_id Int?
+  created_at           DateTime          @default(now()) @db.DateTime(0)
+  updated_at           DateTime          @updatedAt @db.DateTime(0)
+  finished_at          DateTime?         @db.DateTime(0)
+  concluido_at         DateTime?         @db.DateTime(0)
+  /// Vendedor logado que abriu `/estoque/embalagem/[id]` pela primeira vez.
+  embalagem_iniciada_vendedor_id Int?
+  embalagem_iniciada_at          DateTime?         @db.DateTime(0)
+  /// Vendedor logado que concluiu a embalagem (`POST .../embalagem/[id]/finalizar`).
+  embalagem_finalizada_vendedor_id Int?
+
+  orders                         stock_separation_order[]
+  separacao_vendedor             vendedor?            @relation("SepColaborador", fields: [separacao_vendedor_id], references: [id], onDelete: SetNull, map: "fk_stock_sep_colaborador")
+  embalagem_iniciada_vendedor    vendedor?            @relation("SepEmbalagemIniciada", fields: [embalagem_iniciada_vendedor_id], references: [id], onDelete: SetNull, map: "fk_stock_sep_emb_vend")
+  embalagem_finalizada_vendedor  vendedor?            @relation("SepEmbalagemFinalizada", fields: [embalagem_finalizada_vendedor_id], references: [id], onDelete: SetNull, map: "fk_stock_sep_emb_final_vend")
+
+  @@index([status], map: "idx_stock_separation_status")
+  @@index([created_at], map: "idx_stock_separation_created")
+}
+
+model stock_separation_order {
+  id             Int              @id @default(autoincrement())
+  separation_id  Int
+  order_numero   Int
+
+  separation stock_separation @relation(fields: [separation_id], references: [id], onDelete: Cascade, map: "fk_separation_order_sep")
+  order_ref  platform_order   @relation("StockSeparationOrderPedido", fields: [order_numero], references: [numero], onDelete: Cascade, map: "fk_separation_order_pedido")
+
+  @@unique([separation_id, order_numero], map: "uk_separation_order")
+  @@index([order_numero], map: "idx_separation_order_numero")
 }

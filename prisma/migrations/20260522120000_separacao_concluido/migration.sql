@@ -1,0 +1,3 @@
+ALTER TABLE `stock_separation` ADD COLUMN `concluido_at` DATETIME(0) NULL AFTER `finished_at`;
+
+ALTER TABLE `stock_separation` MODIFY COLUMN `status` ENUM('SEPARANDO', 'SEPARADO', 'CONCLUIDO') NOT NULL DEFAULT 'SEPARANDO';
