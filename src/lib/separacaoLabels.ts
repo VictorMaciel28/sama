@@ -9,6 +9,8 @@ export function labelSeparacaoStatus(s: SeparacaoStatus): string {
       return 'Pronto para embalagem'
     case 'CONCLUIDO':
       return 'Concluído'
+    case 'PRE_FATURAMENTO':
+      return 'Aprovado para faturamento'
     default:
       return String(s)
   }
@@ -23,6 +25,8 @@ export function labelSeparacaoStatusListagem(s: SeparacaoStatus): string {
       return 'Enviado para embalagem'
     case 'CONCLUIDO':
       return 'Concluído'
+    case 'PRE_FATURAMENTO':
+      return 'Pré-faturamento'
     default:
       return String(s)
   }

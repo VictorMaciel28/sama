@@ -138,12 +138,19 @@ export const MENU_ITEMS: MenuItemType[] = [
     icon: 'ri:stack-line',
     children: [
       {
-        key: 'estoque-separacao',
-        label: 'Separação',
-        icon: 'ri:split-cells-horizontal',
-        url: '/estoque/separacao',
+        key: 'estoque-pre-faturamento',
+        label: 'Pré-faturamento',
+        icon: 'ri:file-list-3-line',
+        url: '/estoque/pre-faturamento',
         parentKey: 'estoque',
       },
+      // {
+      //   key: 'estoque-separacao',
+      //   label: 'Separação',
+      //   icon: 'ri:split-cells-horizontal',
+      //   url: '/estoque/separacao',
+      //   parentKey: 'estoque',
+      // },
       {
         key: 'estoque-embalagem',
         label: 'Embalagem',

@@ -4,6 +4,7 @@ import { options } from '@/app/api/auth/[...nextauth]/options'
 import { prisma } from '@/lib/prisma'
 import { labelSeparacaoStatus } from '@/lib/separacaoLabels'
 import { aggregateItensSeparacao } from '@/lib/separacaoAggregate'
+import { SeparacaoStatus } from '@prisma/client'
 
 export async function GET(_: Request, { params }: { params: { id: string } }) {
   try {
@@ -41,6 +42,13 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
 
     if (!sep) {
       return NextResponse.json({ ok: false, error: 'Separação não encontrada' }, { status: 404 })
+    }
+
+    if (sep.status === SeparacaoStatus.PRE_FATURAMENTO) {
+      return NextResponse.json(
+        { ok: false, error: 'Esta separação é de pré-faturamento e não abre na tela de separação física.' },
+        { status: 404 },
+      )
     }
 
     const pedidos = sep.orders.map((o) => ({

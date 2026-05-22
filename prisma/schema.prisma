@@ -714,6 +714,7 @@ enum SeparacaoStatus {
   SEPARANDO
   SEPARADO
   CONCLUIDO
+  PRE_FATURAMENTO
 }
 
 /// Agrupamento de pedidos para separação física (estoque).

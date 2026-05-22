@@ -1,8 +1,10 @@
 import { prisma } from '@/lib/prisma'
 import { labelSeparacaoStatusListagem } from '@/lib/separacaoLabels'
-import { SeparacaoStatus } from '@prisma/client'
+import { PedidoStatus, SeparacaoStatus } from '@prisma/client'
 
-export type EmbalagemListaRow = {
+/** Linha da listagem de embalagem: separação já existente ou pedido faturado ainda sem vínculo de embalagem. */
+export type EmbalagemListaRowSeparacao = {
+  kind: 'separacao'
   id: number
   status: string
   status_label: string
@@ -15,8 +17,18 @@ export type EmbalagemListaRow = {
   pedidos: { numero: number; cliente: string; status: string; total: string }[]
 }
 
-function sortEmbalagemRows<T extends { status: SeparacaoStatus; finished_at: Date | null; concluido_at: Date | null }>(
-  rows: T[]
+export type EmbalagemListaRowPedidoFaturado = {
+  kind: 'pedido_faturado'
+  order_numero: number
+  cliente: string
+  total: string
+  data: string
+}
+
+export type EmbalagemListaRow = EmbalagemListaRowSeparacao | EmbalagemListaRowPedidoFaturado
+
+function sortSeparacaoRows<T extends { status: SeparacaoStatus; finished_at: Date | null; concluido_at: Date | null }>(
+  rows: T[],
 ): T[] {
   return [...rows].sort((a, b) => {
     const pri = (s: SeparacaoStatus) => (s === SeparacaoStatus.SEPARADO ? 0 : 1)
@@ -31,7 +43,30 @@ function sortEmbalagemRows<T extends { status: SeparacaoStatus; finished_at: Dat
 
 /** Mesmos dados do `GET /api/estoque/embalagem` (para SSR + API). */
 export async function getEmbalagemListaPayload(): Promise<EmbalagemListaRow[]> {
-  const rows = await prisma.stock_separation.findMany({
+  const emEmbalagemNums = await prisma.stock_separation_order.findMany({
+    where: {
+      separation: { status: { in: [SeparacaoStatus.SEPARADO, SeparacaoStatus.CONCLUIDO] } },
+    },
+    select: { order_numero: true },
+  })
+  const ocupadosEmb = new Set(emEmbalagemNums.map((x) => x.order_numero))
+
+  const pedidosFaturados = await prisma.platform_order.findMany({
+    where: {
+      status: PedidoStatus.FATURADO,
+      ...(ocupadosEmb.size > 0 ? { numero: { notIn: [...ocupadosEmb] } } : {}),
+    },
+    orderBy: { data: 'desc' },
+    take: 200,
+    select: {
+      numero: true,
+      cliente: true,
+      total: true,
+      data: true,
+    },
+  })
+
+  const separacoes = await prisma.stock_separation.findMany({
     where: { status: { in: [SeparacaoStatus.SEPARADO, SeparacaoStatus.CONCLUIDO] } },
     take: 300,
     include: {
@@ -44,9 +79,10 @@ export async function getEmbalagemListaPayload(): Promise<EmbalagemListaRow[]> {
     },
   })
 
-  const sorted = sortEmbalagemRows(rows)
+  const sortedSep = sortSeparacaoRows(separacoes)
 
-  return sorted.map((r) => ({
+  const rowsSep: EmbalagemListaRowSeparacao[] = sortedSep.map((r) => ({
+    kind: 'separacao',
     id: r.id,
     status: r.status,
     status_label: labelSeparacaoStatusListagem(r.status),
@@ -63,4 +99,14 @@ export async function getEmbalagemListaPayload(): Promise<EmbalagemListaRow[]> {
       total: o.order_ref.total.toString(),
     })),
   }))
+
+  const rowsPed: EmbalagemListaRowPedidoFaturado[] = pedidosFaturados.map((p) => ({
+    kind: 'pedido_faturado',
+    order_numero: p.numero,
+    cliente: p.cliente,
+    total: p.total.toString(),
+    data: p.data.toISOString().slice(0, 10),
+  }))
+
+  return [...rowsPed, ...rowsSep]
 }

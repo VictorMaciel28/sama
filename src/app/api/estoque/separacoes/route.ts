@@ -18,6 +18,7 @@ export async function GET() {
     if (error) return error
 
     const rows = await prisma.stock_separation.findMany({
+      where: { status: { not: SeparacaoStatus.PRE_FATURAMENTO } },
       orderBy: { id: 'desc' },
       take: 150,
       include: {

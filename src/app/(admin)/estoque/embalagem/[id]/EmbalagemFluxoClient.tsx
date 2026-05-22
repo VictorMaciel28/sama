@@ -7,7 +7,7 @@ import { matchesSkuOrGtin } from '@/lib/embalagemScanMatch'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Badge, Button, Card, Col, Form, ListGroup, Modal, Row, Spinner } from 'react-bootstrap'
+import { Badge, Button, Card, Col, Form, ListGroup, Modal, Overlay, Row, Spinner, Tooltip } from 'react-bootstrap'
 
 /** Destaque verde (conferido completo). */
 const rowConferidoStyle: CSSProperties = {
@@ -93,6 +93,7 @@ export default function EmbalagemFluxoClient() {
   const [qtdPorBip, setQtdPorBip] = useState('1')
   const [scanErro, setScanErro] = useState<string | null>(null)
   const [modalErro, setModalErro] = useState<string | null>(null)
+  const [tinyTip, setTinyTip] = useState<{ target: HTMLElement; show: boolean } | null>(null)
   const [fotoModal, setFotoModal] = useState<{
     show: boolean
     nome: string
@@ -163,13 +164,19 @@ export default function EmbalagemFluxoClient() {
     completingRef.current = true
     try {
       const res = await fetch(`/api/estoque/embalagem/${id}/finalizar`, { method: 'POST' })
-      const json = await res.json().catch(() => null)
+      const json = (await res.json().catch(() => null)) as { ok?: boolean; tiny_updated?: boolean; error?: string } | null
       if (!res.ok || !json?.ok) {
         completingRef.current = false
         setModalErro(json?.error ?? 'Não foi possível concluir.')
         return
       }
       notifyEmbalagemListaUpdated()
+      const target = scanRef.current
+      if (json.tiny_updated && target) {
+        setTinyTip({ target, show: true })
+        await new Promise((r) => window.setTimeout(r, 2200))
+        setTinyTip(null)
+      }
       router.replace('/estoque/embalagem')
     } catch {
       completingRef.current = false
@@ -285,6 +292,15 @@ export default function EmbalagemFluxoClient() {
 
   return (
     <>
+      {tinyTip ? (
+        <Overlay target={tinyTip.target} show={tinyTip.show} placement="top" rootClose>
+          {(p) => (
+            <Tooltip id="tiny-embalagem-finalizar-tip" {...p}>
+              Situação atualizada no Tiny.
+            </Tooltip>
+          )}
+        </Overlay>
+      ) : null}
       <div className="pb-3" style={{ paddingBottom: 'max(9rem, env(safe-area-inset-bottom))' }}>
         <div className="mb-3">
           <Button
