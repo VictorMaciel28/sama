@@ -12,6 +12,18 @@ export function formatSqlDateOnly(d: Date): string {
   return `${y}-${m}-${day}`
 }
 
+/** Exibe `YYYY-MM-DD` em formato curto pt-BR (lista / relatórios). */
+export function formatSqlYmdToPtBr(ymd: string | null | undefined): string {
+  const s = String(ymd ?? '').trim().slice(0, 10)
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(s)
+  if (!m) return '—'
+  const y = Number(m[1])
+  const mo = Number(m[2])
+  const d = Number(m[3])
+  if (y < 1 || mo < 1 || d < 1) return '—'
+  return new Date(y, mo - 1, d).toLocaleDateString('pt-BR')
+}
+
 /** Interpreta YYYY-MM-DD do formulário para gravar em coluna DATE (meia-noite UTC). */
 export function parseYmdToSqlDate(ymd: string): Date {
   const s = String(ymd || '').trim().slice(0, 10)

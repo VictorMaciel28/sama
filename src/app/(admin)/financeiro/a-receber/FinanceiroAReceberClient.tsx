@@ -21,7 +21,7 @@ function formatMesLabel(yyyyMm: string): string {
 
 const moneyPt = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' })
 
-type PayRow = {
+type ReceberRow = {
   id: number
   number: string
   emiter: string
@@ -40,7 +40,7 @@ type PayRow = {
 
 type PaymentStatusOption = { code: number; name: string }
 
-type ObsModalState = { number: string; destine: string; observation: string } | null
+type ObsModalState = { number: string; emiter: string; destine: string; observation: string } | null
 
 type ParcelaApiRow = {
   id: number
@@ -65,10 +65,12 @@ type ParcelsModalState =
       parcels: ParcelaApiRow[]
     }
 
-export default function FinanceiroAPagarPage() {
+export default function FinanceiroAReceberClient() {
+  const [emiters, setEmiters] = useState<string[]>([])
   const [destines, setDestines] = useState<string[]>([])
   const [paymentStatuses, setPaymentStatuses] = useState<PaymentStatusOption[]>([])
-  const [rows, setRows] = useState<PayRow[]>([])
+  const [rows, setRows] = useState<ReceberRow[]>([])
+  const [filterEmiter, setFilterEmiter] = useState('')
   const [filterDestine, setFilterDestine] = useState('')
   const [filterMes, setFilterMes] = useState(defaultMesYyyyMm)
   const [loading, setLoading] = useState(true)
@@ -84,10 +86,12 @@ export default function FinanceiroAPagarPage() {
     try {
       const params = new URLSearchParams()
       params.set('mes', filterMes.trim() || defaultMesYyyyMm())
+      if (filterEmiter.trim()) params.set('emiter', filterEmiter.trim())
       if (filterDestine.trim()) params.set('destine', filterDestine.trim())
-      const res = await fetch(`/api/financeiro/a-pagar?${params.toString()}`)
+      const res = await fetch(`/api/financeiro/a-receber?${params.toString()}`)
       if (res.status === 403) {
         setForbidden(true)
+        setEmiters([])
         setDestines([])
         setPaymentStatuses([])
         setRows([])
@@ -96,10 +100,12 @@ export default function FinanceiroAPagarPage() {
       const json = await res.json().catch(() => null)
       if (json?.ok) {
         setForbidden(false)
+        setEmiters(Array.isArray(json.emiters) ? json.emiters : [])
         setDestines(Array.isArray(json.destines) ? json.destines : [])
         setPaymentStatuses(Array.isArray(json.payment_statuses) ? json.payment_statuses : [])
         setRows(Array.isArray(json.data) ? json.data : [])
       } else {
+        setEmiters([])
         setDestines([])
         setPaymentStatuses([])
         setRows([])
@@ -107,7 +113,7 @@ export default function FinanceiroAPagarPage() {
     } finally {
       setLoading(false)
     }
-  }, [filterDestine, filterMes])
+  }, [filterEmiter, filterDestine, filterMes])
 
   useEffect(() => {
     load()
@@ -123,7 +129,7 @@ export default function FinanceiroAPagarPage() {
     })
     const params = new URLSearchParams()
     params.set('mes', filterMes.trim() || defaultMesYyyyMm())
-    fetch(`/api/financeiro/a-pagar/${paymentId}/parcelas?${params.toString()}`)
+    fetch(`/api/financeiro/a-receber/${paymentId}/parcelas?${params.toString()}`)
       .then(async (res) => {
         const json = await res.json().catch(() => null)
         if (!res.ok || !json?.ok) {
@@ -169,7 +175,7 @@ export default function FinanceiroAPagarPage() {
     if (statusSavingPaymentId != null) return
     setStatusSavingPaymentId(paymentId)
     try {
-      const res = await fetch(`/api/financeiro/a-pagar/${paymentId}/parcelas-status`, {
+      const res = await fetch(`/api/financeiro/a-receber/${paymentId}/parcelas-status`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mes: filterMes.trim() || defaultMesYyyyMm(), status: newStatus }),
@@ -203,30 +209,33 @@ export default function FinanceiroAPagarPage() {
   return (
     <>
       <Row className="mb-4 align-items-end">
-        <Col xs={12} xl={4}>
-          <h4 className="mb-1">A pagar</h4>
-
+        <Col xs={12} xl={3}>
+          <h4 className="mb-1">A receber</h4>
         </Col>
-        <Col xs={12} sm={6} xl className="mt-3 mt-xl-0">
-          <Form.Group controlId="filtro-mes" className="mb-0">
-            <Form.Label className="small text-muted mb-1">Mês Referente</Form.Label>
-            <Form.Control
-              type="month"
-              value={filterMes}
-              onChange={(e) => setFilterMes(e.target.value)}
-              disabled={loading}
-            />
+        <Col xs={12} sm={6} xl={3} className="mt-3 mt-xl-0">
+          <Form.Group controlId="a-receber-mes" className="mb-0">
+            <Form.Label className="small text-muted mb-1">Mês referente</Form.Label>
+            <Form.Control type="month" value={filterMes} onChange={(e) => setFilterMes(e.target.value)} disabled={loading} />
           </Form.Group>
         </Col>
-        <Col xs={12} sm={6} xl className="mt-3 mt-xl-0">
-          <Form.Group controlId="filtro-destine" className="mb-0">
-            <Form.Label className="small text-muted mb-1">Empresa</Form.Label>
-            <Form.Select
-              value={filterDestine}
-              onChange={(e) => setFilterDestine(e.target.value)}
-              disabled={loading}
-            >
-              <option value="">Todas as empresas</option>
+        <Col xs={12} sm={6} xl={3} className="mt-3 mt-xl-0">
+          <Form.Group controlId="a-receber-empresa" className="mb-0">
+            <Form.Label className="small text-muted mb-1">Empresa emissora</Form.Label>
+            <Form.Select value={filterEmiter} onChange={(e) => setFilterEmiter(e.target.value)} disabled={loading}>
+              <option value="">Todas</option>
+              {emiters.map((e) => (
+                <option key={e} value={e}>
+                  {e}
+                </option>
+              ))}
+            </Form.Select>
+          </Form.Group>
+        </Col>
+        <Col xs={12} sm={6} xl={3} className="mt-3 mt-xl-0">
+          <Form.Group controlId="a-receber-cliente" className="mb-0">
+            <Form.Label className="small text-muted mb-1">Cliente</Form.Label>
+            <Form.Select value={filterDestine} onChange={(e) => setFilterDestine(e.target.value)} disabled={loading}>
+              <option value="">Todos</option>
               {destines.map((d) => (
                 <option key={d} value={d}>
                   {d}
@@ -240,9 +249,7 @@ export default function FinanceiroAPagarPage() {
       <Card className="border-0 shadow-sm">
         <Card.Body>
           <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
-            <span className="text-muted small">
-              {loading ? 'Carregando…' : `${rows.length} registro(s)`}
-            </span>
+            <span className="text-muted small">{loading ? 'Carregando…' : `${rows.length} registro(s)`}</span>
             <Button
               variant="outline-secondary"
               size="sm"
@@ -262,7 +269,7 @@ export default function FinanceiroAPagarPage() {
             </div>
           ) : rows.length === 0 ? (
             <div className="text-muted py-4 text-center">
-              Nenhum registro com income = 0 e parcela no mês selecionado para o filtro de empresa.
+              Nenhum registro com income = 1 e parcela no mês selecionado para os filtros de empresa e cliente.
             </div>
           ) : (
             <div className="table-responsive rounded border">
@@ -270,15 +277,15 @@ export default function FinanceiroAPagarPage() {
                 <thead className="table-light">
                   <tr>
                     <th className="text-nowrap">Vencimento</th>
-                    <th>Destino</th>
+                    <th>Empresa emissora</th>
+                    <th>Cliente</th>
                     <th className="text-nowrap">Número</th>
-                    <th>Emitente</th>
                     <th>Meio</th>
                     <th>Conta</th>
                     <th>Parcela</th>
                     <th className="text-nowrap">Data pagamento</th>
                     <th className="text-nowrap" style={{ minWidth: '10rem' }}>
-                      Status
+                      Status 
                     </th>
                     <th className="text-center text-nowrap" style={{ width: 56 }}>
                       Obs.
@@ -292,13 +299,13 @@ export default function FinanceiroAPagarPage() {
                     return (
                       <tr key={r.id}>
                         <td className="text-nowrap small">{formatSqlYmdToPtBr(r.parcel_vencimento_mes)}</td>
-                        <td className="text-break" style={{ maxWidth: 220 }}>
+                        <td className="text-break" style={{ maxWidth: 200 }}>
+                          {r.emiter}
+                        </td>
+                        <td className="text-break" style={{ maxWidth: 200 }}>
                           {r.destine}
                         </td>
                         <td>{r.number}</td>
-                        <td className="text-break" style={{ maxWidth: 220 }}>
-                          {r.emiter}
-                        </td>
                         <td className="text-nowrap small">
                           {r.method_name ? `${r.method_name} (${r.method})` : r.method}
                         </td>
@@ -355,6 +362,7 @@ export default function FinanceiroAPagarPage() {
                               hasObs &&
                               setObsModal({
                                 number: r.number,
+                                emiter: r.emiter,
                                 destine: r.destine,
                                 observation: r.observation.trim(),
                               })
@@ -382,12 +390,14 @@ export default function FinanceiroAPagarPage() {
             <>
               <p className="text-muted small mb-3">
                 Pagamento nº <strong>{obsModal.number}</strong>
-                {obsModal.destine ? (
-                  <>
-                    {' '}
-                    · <span className="text-break">{obsModal.destine}</span>
-                  </>
-                ) : null}
+                <br />
+                <span className="text-break">
+                  <strong>Empresa:</strong> {obsModal.emiter}
+                </span>
+                <br />
+                <span className="text-break">
+                  <strong>Cliente:</strong> {obsModal.destine}
+                </span>
               </p>
               <div
                 className="rounded border bg-light p-3 small"
@@ -419,15 +429,19 @@ export default function FinanceiroAPagarPage() {
             <div className="text-danger small">{parcelsModal.error}</div>
           ) : parcelsModal?.payment ? (
             <>
+              <p className="text-muted small mb-2">
+                <strong className="text-body">Empresa:</strong>{' '}
+                <span className="text-break">{parcelsModal.payment.emiter}</span>
+              </p>
               <p className="text-muted small mb-3">
+                <strong className="text-body">Cliente:</strong>{' '}
                 <span className="text-break fw-medium">{parcelsModal.payment.destine}</span>
                 <br />
-                Número {parcelsModal.payment.number} · {parcelsModal.payment.emiter}
+                Número {parcelsModal.payment.number}
               </p>
               <p className="small text-muted mb-2">
-                Destaque: parcelas com vencimento em{' '}
-                <strong className="text-capitalize">{mesLegenda}</strong> (filtro de mês atual da
-                lista).
+                Destaque: parcelas com vencimento em <strong className="text-capitalize">{mesLegenda}</strong> (filtro
+                de mês da lista).
               </p>
               <div className="table-responsive rounded border">
                 <Table size="sm" className="mb-0 align-middle">

@@ -103,6 +103,20 @@ export const MENU_ITEMS: MenuItemType[] = [
         url: '/financeiro/a-pagar',
         parentKey: 'financeiro',
       },
+      {
+        key: 'financeiro-a-receber',
+        label: 'A receber',
+        icon: 'ri:funds-line',
+        url: '/financeiro/a-receber',
+        parentKey: 'financeiro',
+      },
+      {
+        key: 'financeiro-calendario',
+        label: 'Calendário',
+        icon: 'ri:calendar-line',
+        url: '/financeiro/calendario',
+        parentKey: 'financeiro',
+      },
     ],
   },
   // {

@@ -34,6 +34,7 @@ export async function GET(req: Request) {
     }
 
     const { searchParams } = new URL(req.url)
+    const emiterParam = (searchParams.get('emiter') || '').trim()
     const destineParam = (searchParams.get('destine') || '').trim()
     const ym = parseMonthQueryParam(searchParams.get('mes'))
     const { gte, lte } = monthParcelDateBounds(ym)
@@ -51,26 +52,38 @@ export async function GET(req: Request) {
       return NextResponse.json({
         ok: true,
         mes: yearMonthToYmdPrefix(ym),
+        emiters: [],
         destines: [],
         payment_statuses,
         data: [],
       })
     }
 
-    const basePaymentWhere = {
-      income: 0 as const,
+    const baseForLists = {
+      income: 1 as const,
       id: { in: paymentIdsInMonth },
     }
 
-    const [destineGroups, payments, methods, accounts, payment_statuses] = await Promise.all([
+    const listFilterWhere = {
+      ...baseForLists,
+      ...(emiterParam ? { emiter: emiterParam } : {}),
+      ...(destineParam ? { destine: destineParam } : {}),
+    }
+
+    const [emiterGroups, destineGroups, payments, methods, accounts, payment_statuses] = await Promise.all([
+      prisma.payment.groupBy({
+        by: ['emiter'],
+        where: destineParam ? { ...baseForLists, destine: destineParam } : baseForLists,
+        orderBy: { emiter: 'asc' },
+      }),
       prisma.payment.groupBy({
         by: ['destine'],
-        where: basePaymentWhere,
+        where: emiterParam ? { ...baseForLists, emiter: emiterParam } : baseForLists,
         orderBy: { destine: 'asc' },
       }),
       prisma.payment.findMany({
-        where: destineParam ? { ...basePaymentWhere, destine: destineParam } : basePaymentWhere,
-        orderBy: [{ destine: 'asc' }, { id: 'asc' }],
+        where: listFilterWhere,
+        orderBy: [{ emiter: 'asc' }, { destine: 'asc' }, { id: 'asc' }],
       }),
       prisma.payment_method.findMany({ select: { code: true, name: true } }),
       prisma.account.findMany({ select: { id: true, name: true } }),
@@ -80,6 +93,7 @@ export async function GET(req: Request) {
     const methodByCode = new Map(methods.map((m) => [m.code, m.name]))
     const accountById = new Map(accounts.map((a) => [a.id, a.name]))
 
+    const emiters = emiterGroups.map((r) => r.emiter).filter((e) => e != null && String(e).trim() !== '')
     const destines = destineGroups.map((r) => r.destine).filter((d) => d != null && String(d).trim() !== '')
 
     const finalIds = payments.map((p) => p.id)
@@ -140,10 +154,10 @@ export async function GET(req: Request) {
       return b.id - a.id
     })
 
-    return NextResponse.json({ ok: true, mes: yearMonthToYmdPrefix(ym), destines, payment_statuses, data })
+    return NextResponse.json({ ok: true, mes: yearMonthToYmdPrefix(ym), emiters, destines, payment_statuses, data })
   } catch (error: any) {
     return NextResponse.json(
-      { ok: false, error: error?.message ?? 'Erro ao listar a pagar' },
+      { ok: false, error: error?.message ?? 'Erro ao listar a receber' },
       { status: 500 }
     )
   }

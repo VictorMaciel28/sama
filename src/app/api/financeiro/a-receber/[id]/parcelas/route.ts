@@ -21,7 +21,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
     const { gte, lte } = monthParcelDateBounds(ym)
 
     const payment = await prisma.payment.findFirst({
-      where: { id, income: 0 },
+      where: { id, income: 1 },
       select: {
         id: true,
         number: true,
