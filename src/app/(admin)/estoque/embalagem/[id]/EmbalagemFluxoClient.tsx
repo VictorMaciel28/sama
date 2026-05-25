@@ -2,12 +2,15 @@
 
 import type { CSSProperties } from 'react'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
+import { useLayoutContext } from '@/context/useLayoutContext'
 import { notifyEmbalagemListaUpdated } from '@/lib/embalagemListaBroadcast'
 import { matchesSkuOrGtin } from '@/lib/embalagemScanMatch'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Badge, Button, Card, Col, Form, ListGroup, Modal, Overlay, Row, Spinner, Tooltip } from 'react-bootstrap'
+import { toast } from 'react-toastify'
+import 'react-toastify/dist/ReactToastify.css'
 
 /** Destaque verde (conferido completo). */
 const rowConferidoStyle: CSSProperties = {
@@ -81,9 +84,20 @@ function pickImagemUrl(json: Record<string, unknown> | null): string | null {
   return null
 }
 
+const BIP_TOAST_POS = 'top-right' as const
+
+function toastBipSucesso(message: string) {
+  toast.success(message, { position: BIP_TOAST_POS, autoClose: 3200 })
+}
+
+function toastBipErro(message: string) {
+  toast.error(message, { position: BIP_TOAST_POS, autoClose: 4500 })
+}
+
 export default function EmbalagemFluxoClient() {
   const params = useParams()
   const router = useRouter()
+  const { theme } = useLayoutContext()
   const id = String(params?.id ?? '')
   const [data, setData] = useState<Payload | null>(null)
   const [loading, setLoading] = useState(true)
@@ -91,7 +105,6 @@ export default function EmbalagemFluxoClient() {
   const [linhas, setLinhas] = useState<Linha[]>([])
   const [scan, setScan] = useState('')
   const [qtdPorBip, setQtdPorBip] = useState('1')
-  const [scanErro, setScanErro] = useState<string | null>(null)
   const [modalErro, setModalErro] = useState<string | null>(null)
   const [tinyTip, setTinyTip] = useState<{ target: HTMLElement; show: boolean } | null>(null)
   const [fotoModal, setFotoModal] = useState<{
@@ -102,6 +115,8 @@ export default function EmbalagemFluxoClient() {
     erro: string | null
   }>({ show: false, nome: '', url: null, loading: false, erro: null })
   const scanRef = useRef<HTMLInputElement>(null)
+  const scanDockRef = useRef<HTMLDivElement>(null)
+  const confirmarScanRef = useRef<() => void>(() => {})
   const completingRef = useRef(false)
   const rowRefs = useRef<Record<string, HTMLDivElement | null>>({})
 
@@ -158,6 +173,8 @@ export default function EmbalagemFluxoClient() {
 
   const conferidos = useMemo(() => linhas.filter(linhaEmbConcluida).length, [linhas])
   const totalLinhas = linhas.length
+
+  const scanFieldLabelColor = theme === 'dark' ? '#f8f9fa' : '#000000'
 
   const finalizarSeparacao = useCallback(async () => {
     if (completingRef.current) return
@@ -223,7 +240,6 @@ export default function EmbalagemFluxoClient() {
     }
     const q = scan.trim()
     if (!q) {
-      setScanErro(null)
       return
     }
     const incRaw = Number.parseInt(String(qtdPorBip).trim(), 10)
@@ -231,13 +247,15 @@ export default function EmbalagemFluxoClient() {
     const idx = linhas.findIndex((l) => !linhaEmbConcluida(l) && itemLinhaMatchesScan(l, q))
     if (idx === -1) {
       const jaInformado = linhas.some((l) => linhaEmbConcluida(l) && itemLinhaMatchesScan(l, q))
-      setScanErro(jaInformado ? 'Material já foi informado' : 'Nenhum item pendente corresponde a este código.')
+      const msg = jaInformado ? 'Material já foi informado' : 'Nenhum item pendente corresponde a este código.'
+      toastBipErro(msg)
       return
     }
     const alvo = linhas[idx]
     const falta = alvo.requerido - alvo.contado
     if (incremento > falta) {
-      setScanErro('Quantidade acima da exigida')
+      const msg = 'Quantidade acima da exigida'
+      toastBipErro(msg)
       return
     }
     const key = alvo.key
@@ -245,7 +263,9 @@ export default function EmbalagemFluxoClient() {
     const next = linhas.map((l, i) => (i === idx ? { ...l, contado: novoContado } : l))
     setLinhas(next)
     setScan('')
-    setScanErro(null)
+    toastBipSucesso(
+      incremento > 1 ? `${incremento} unidades conferidas.` : 'Código conferido com sucesso.',
+    )
     window.setTimeout(() => {
       rowRefs.current[key]?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
       scanRef.current?.focus()
@@ -254,6 +274,15 @@ export default function EmbalagemFluxoClient() {
       void finalizarSeparacao()
     }
   }, [linhas, scan, qtdPorBip, finalizarSeparacao])
+
+  confirmarScanRef.current = confirmarScan
+
+  const confirmarScanOnLeaveDock = useCallback(() => {
+    window.requestAnimationFrame(() => {
+      if (scanDockRef.current?.contains(document.activeElement)) return
+      confirmarScanRef.current()
+    })
+  }, [])
 
   if (loading) {
     return (
@@ -319,8 +348,8 @@ export default function EmbalagemFluxoClient() {
         </div>
 
         {data.pedidos.map((pedido) => (
-          <Card key={pedido.numero} className="border-0 shadow-sm mb-3">
-            <Card.Header className="bg-white py-2 fw-semibold small d-flex flex-wrap align-items-center justify-content-between gap-2">
+          <Card key={pedido.numero} className="border-0 shadow-sm mb-3 overflow-hidden rounded-4">
+            <Card.Header className="bg-white py-2 fw-semibold small d-flex flex-wrap align-items-center justify-content-between gap-2 border-0">
               <span className="d-flex flex-wrap align-items-center gap-2">
                 <span className="fw-medium">Pedido #{pedido.numero}</span>
                 <span className="text-break">{pedido.cliente}</span>
@@ -337,12 +366,12 @@ export default function EmbalagemFluxoClient() {
                   const ok = linhaEmbConcluida(l)
                   const parcial = l.contado > 0 && l.contado < l.requerido
                   return (
-                    <ListGroup.Item key={l.key} className="py-3 px-2 rounded-0 border-bottom">
+                    <ListGroup.Item key={l.key} className="py-3 px-2 rounded-0 border-bottom border-secondary-subtle">
                       <div
                         ref={(el) => {
                           rowRefs.current[l.key] = el
                         }}
-                        className={`rounded p-2 w-100${parcial ? ' border border-info' : ''}`}
+                        className={`rounded-3 p-2 w-100${parcial ? ' border border-info' : ''}`}
                         style={ok ? rowConferidoStyle : parcial ? rowParcialStyle : undefined}
                       >
                         <div className="d-flex align-items-start gap-2">
@@ -402,66 +431,77 @@ export default function EmbalagemFluxoClient() {
       </div>
 
       <div
-        className="position-fixed bottom-0 start-0 end-0 border-top bg-body shadow-lg"
+        className="position-fixed bottom-0 start-0 end-0 border-top bg-body-secondary shadow-sm"
         style={{ zIndex: 1020, paddingBottom: 'max(0.75rem, env(safe-area-inset-bottom))' }}
       >
         <div className="px-3 pt-3 mx-auto" style={{ maxWidth: 720 }}>
-          <Form
-            noValidate
-            onSubmit={(e) => {
-              e.preventDefault()
-              confirmarScan()
-            }}
-          >
-            <Row className="g-2 align-items-end">
-              <Col xs>
-                <Form.Label className="small fw-semibold mb-1">SKU ou GTIN</Form.Label>
-                <Form.Control
-                  ref={scanRef}
-                  size="lg"
-                  type="text"
-                  inputMode="text"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  spellCheck={false}
-                  value={scan}
-                  onChange={(e) => {
-                    setScan(e.target.value)
-                    setScanErro(null)
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key !== 'Enter') return
-                    e.preventDefault()
-                    confirmarScan()
-                  }}
-                />
-              </Col>
-              <Col xs="auto" style={{ width: '5.5rem' }}>
-                <Form.Label className="small fw-semibold mb-1">Qtd</Form.Label>
-                <Form.Control
-                  size="lg"
-                  type="number"
-                  inputMode="numeric"
-                  min={1}
-                  step={1}
-                  value={qtdPorBip}
-                  onChange={(e) => {
-                    setQtdPorBip(e.target.value)
-                    setScanErro(null)
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key !== 'Enter') return
-                    e.preventDefault()
-                    confirmarScan()
-                  }}
-                />
-              </Col>
-            </Row>
-            <button type="submit" className="visually-hidden" tabIndex={-1} aria-hidden="true">
-              Confirmar
-            </button>
-            {scanErro ? <div className="text-danger small mt-1 mb-2">{scanErro}</div> : <div className="mb-2" />}
-          </Form>
+          <div ref={scanDockRef} className="rounded-3 border border-secondary-subtle bg-body-tertiary p-3 shadow-sm">
+            <Form
+              noValidate
+              onSubmit={(e) => {
+                e.preventDefault()
+                confirmarScan()
+              }}
+            >
+              <Row className="g-2 align-items-end">
+                <Col xs>
+                  <Form.Label
+                    className="small mb-1 fw-bold"
+                    style={{ color: scanFieldLabelColor, letterSpacing: '0.01em' }}
+                  >
+                    SKU ou GTIN
+                  </Form.Label>
+                  <Form.Control
+                    ref={scanRef}
+                    size="lg"
+                    type="text"
+                    inputMode="text"
+                    autoComplete="off"
+                    autoCorrect="off"
+                    spellCheck={false}
+                    value={scan}
+                    onBlur={confirmarScanOnLeaveDock}
+                    onChange={(e) => {
+                      setScan(e.target.value)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return
+                      e.preventDefault()
+                      confirmarScan()
+                    }}
+                  />
+                </Col>
+                <Col xs="auto" style={{ width: '5.5rem' }}>
+                  <Form.Label
+                    className="small mb-1 fw-bold"
+                    style={{ color: scanFieldLabelColor, letterSpacing: '0.01em' }}
+                  >
+                    Qtd
+                  </Form.Label>
+                  <Form.Control
+                    size="lg"
+                    type="number"
+                    inputMode="numeric"
+                    min={1}
+                    step={1}
+                    value={qtdPorBip}
+                    onBlur={confirmarScanOnLeaveDock}
+                    onChange={(e) => {
+                      setQtdPorBip(e.target.value)
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key !== 'Enter') return
+                      e.preventDefault()
+                      confirmarScan()
+                    }}
+                  />
+                </Col>
+              </Row>
+              <button type="submit" className="visually-hidden" tabIndex={-1} aria-hidden="true">
+                Confirmar
+              </button>
+            </Form>
+          </div>
         </div>
       </div>
 

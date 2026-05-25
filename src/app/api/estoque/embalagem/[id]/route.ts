@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
 import { prisma } from '@/lib/prisma'
-import { fetchGtinMapForProdutoIds } from '@/lib/tinyProdutoGtins'
+import { fetchGtinLookupFromPedidosObter } from '@/lib/tinyPedidoObterGtins'
 import { SeparacaoStatus } from '@prisma/client'
 
 export async function GET(_: Request, { params }: { params: { id: string } }) {
@@ -28,6 +28,7 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
                 numero: true,
                 cliente: true,
                 status: true,
+                tiny_id: true,
                 products: {
                   select: {
                     id: true,
@@ -76,6 +77,7 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
                   numero: true,
                   cliente: true,
                   status: true,
+                  tiny_id: true,
                   products: {
                     select: {
                       id: true,
@@ -94,29 +96,37 @@ export async function GET(_: Request, { params }: { params: { id: string } }) {
       })
     }
 
-    const produtoIds = [
-      ...new Set(
-        sep.orders.flatMap((o) =>
-          o.order_ref.products.map((p) => p.produto_id).filter((id): id is number => id != null && id > 0),
-        ),
-      ),
-    ]
-    const gtinPorProduto = await fetchGtinMapForProdutoIds(produtoIds)
+    const tinyIds = [...new Set(sep.orders.map((o) => o.order_ref.tiny_id).filter((tid): tid is number => tid != null && tid > 0))]
+    const { byProdutoId, byCodigoNorm } = await fetchGtinLookupFromPedidosObter(tinyIds)
+
+    const normCod = (c: string | null | undefined) =>
+      String(c ?? '')
+        .trim()
+        .toUpperCase()
 
     const pedidos = sep.orders.map((o, index) => ({
       index,
       numero: o.order_ref.numero,
       cliente: o.order_ref.cliente,
       status: o.order_ref.status,
-      itens: o.order_ref.products.map((p) => ({
-        id: p.id,
-        codigo: p.codigo,
-        gtin: p.produto_id != null ? (gtinPorProduto.get(p.produto_id) ?? null) : null,
-        nome: p.nome,
-        unidade: p.unidade,
-        quantidade: p.quantidade.toString(),
-        produto_id: p.produto_id,
-      })),
+      itens: o.order_ref.products.map((p) => {
+        let gtin: string | null = null
+        if (p.produto_id != null && p.produto_id > 0) {
+          gtin = byProdutoId.get(p.produto_id) ?? null
+        }
+        if (!gtin && p.codigo) {
+          gtin = byCodigoNorm.get(normCod(p.codigo)) ?? null
+        }
+        return {
+          id: p.id,
+          codigo: p.codigo,
+          gtin,
+          nome: p.nome,
+          unidade: p.unidade,
+          quantidade: p.quantidade.toString(),
+          produto_id: p.produto_id,
+        }
+      }),
     }))
 
     return NextResponse.json({

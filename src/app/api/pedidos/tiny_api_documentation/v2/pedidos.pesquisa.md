@@ -3,7 +3,7 @@ Serviço destinado a fazer consulta de Pedidos.
 
 REST
 REST URL
-https://api.tiny.com.br/api2/pedidos.pesquisa.php
+[https://api.tiny.com.br/api2/pedidos.pesquisa.php](https://api.tiny.com.br/api2/pedidos.pesquisa.php)
 Parâmetros do serviço
 Elemento	Tipo	Ocorrência	Descrição
 token	string	obrigatório	Chave gerada para identificar sua empresa
@@ -60,11 +60,9 @@ retorno.pedidos[ ].pedido.codigo_rastreamento	string	25	condicional	Código de r
 (4) - Estes campos utilizam o formato dd/mm/yyyy, exemplo "01/01/2012".
 (5) - Estes campos utilizam “.” (ponto) como separador de decimais, exemplo "5.25".
 
-
-
 Exemplos da chamada em REST
 
-$url = 'https://api.tiny.com.br/api2/pedidos.pesquisa.php';
+$url = '[https://api.tiny.com.br/api2/pedidos.pesquisa.php](https://api.tiny.com.br/api2/pedidos.pesquisa.php)';
 $token = 'coloque aqui a sua chave da api';
 $numero = 'xxxxx';
 $data = "token=$token&numero=$numero&formato=JSON";
@@ -93,7 +91,6 @@ function enviarREST($url, $data, $optional_headers = null) {
 	
 	return $response;
 }
-
 
 Exemplos do retorno do serviço em JSON
 {
