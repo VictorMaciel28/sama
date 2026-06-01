@@ -25,20 +25,42 @@ function toBigInt(v: unknown): bigint {
   return BigInt(String(v))
 }
 
-function toDateOrInvalid(v: unknown): Date {
-  if (v instanceof Date) return v
-  if (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v)) {
-    return parseYmdToSqlDate(v.slice(0, 10))
-  }
-  return new Date(NaN)
-}
-
-function parseApprovedYmd(s: unknown): Date | null {
+function parseSqlDateYmd(s: unknown): Date | null {
   if (s == null) return null
   const t = String(s).trim()
   if (!t || t === '0000-00-00' || t.startsWith('0000-')) return null
   const d = parseYmdToSqlDate(t.slice(0, 10))
   return Number.isFinite(d.getTime()) ? d : null
+}
+
+/** Exclui `parcel_date` inválido no MySQL (`0000-00-00`, mês/dia zero). */
+export const SQL_PARCEL_DATE_VALID = Prisma.sql`
+  AND CAST(pd.parcel_date AS CHAR(10)) != '0000-00-00'
+  AND CAST(pd.parcel_date AS CHAR(10)) NOT LIKE '0000-%'
+  AND MONTH(pd.parcel_date) > 0
+  AND DAY(pd.parcel_date) > 0
+`
+
+const SQL_PARCEL_YMD_EXPR = Prisma.sql`
+  CASE
+    WHEN pd.parcel_date IS NULL THEN NULL
+    WHEN CAST(pd.parcel_date AS CHAR(10)) = '0000-00-00' THEN NULL
+    WHEN CAST(pd.parcel_date AS CHAR(10)) LIKE '0000-%' THEN NULL
+    WHEN MONTH(pd.parcel_date) < 1 OR DAY(pd.parcel_date) < 1 THEN NULL
+    ELSE DATE_FORMAT(pd.parcel_date, '%Y-%m-%d')
+  END
+`
+
+/** IDs de pagamento com parcela no intervalo de vencimento (sem Prisma em `parcel_date`). */
+export async function findPaymentIdsByParcelMonthRange(gte: Date, lte: Date): Promise<number[]> {
+  const raw = await prisma.$queryRaw<Array<{ id_payment: unknown }>>`
+    SELECT DISTINCT pd.id_payment
+    FROM payment_date pd
+    WHERE pd.parcel_date >= ${gte}
+      AND pd.parcel_date <= ${lte}
+      ${SQL_PARCEL_DATE_VALID}
+  `
+  return raw.map((r) => Number(r.id_payment)).filter((id) => Number.isFinite(id) && id > 0)
 }
 
 function safeOptionalDateTime(v: unknown): Date | null {
@@ -58,7 +80,7 @@ export async function findPaymentDatesByPaymentIds(ids: number[]): Promise<Finan
       pd.id_payment,
       pd.number,
       pd.parcel_value,
-      pd.parcel_date,
+      ${SQL_PARCEL_YMD_EXPR} AS parcel_ymd,
       CASE
         WHEN pd.approved_date IS NULL THEN NULL
         WHEN CAST(pd.approved_date AS CHAR(10)) = '0000-00-00' THEN NULL
@@ -70,7 +92,8 @@ export async function findPaymentDatesByPaymentIds(ids: number[]): Promise<Finan
       pd.inserted_by
     FROM payment_date pd
     WHERE pd.id_payment IN (${Prisma.join(ids)})
-    ORDER BY pd.id_payment ASC, pd.parcel_date ASC, pd.id ASC
+      ${SQL_PARCEL_DATE_VALID}
+    ORDER BY pd.parcel_date ASC, pd.id ASC
   `
 
   return raw.map((r) => ({
@@ -78,8 +101,8 @@ export async function findPaymentDatesByPaymentIds(ids: number[]): Promise<Finan
     id_payment: Number(r.id_payment),
     number: toBigInt(r.number),
     parcel_value: Number(r.parcel_value),
-    parcel_date: toDateOrInvalid(r.parcel_date),
-    approved_date: parseApprovedYmd(r.approved_ymd),
+    parcel_date: parseSqlDateYmd(r.parcel_ymd) ?? new Date(NaN),
+    approved_date: parseSqlDateYmd(r.approved_ymd),
     status: Number(r.status),
     insert_date: safeOptionalDateTime(r.insert_date),
     inserted_by: r.inserted_by != null ? Number(r.inserted_by) : null,
@@ -105,7 +128,7 @@ export async function findPaymentDatesInParcelMonthRange(
       pd.id,
       pd.id_payment,
       pd.parcel_value,
-      pd.parcel_date,
+      ${SQL_PARCEL_YMD_EXPR} AS parcel_ymd,
       CASE
         WHEN pd.approved_date IS NULL THEN NULL
         WHEN CAST(pd.approved_date AS CHAR(10)) = '0000-00-00' THEN NULL
@@ -114,7 +137,9 @@ export async function findPaymentDatesInParcelMonthRange(
       END AS approved_ymd,
       pd.status
     FROM payment_date pd
-    WHERE pd.parcel_date >= ${gte} AND pd.parcel_date <= ${lte}
+    WHERE pd.parcel_date >= ${gte}
+      AND pd.parcel_date <= ${lte}
+      ${SQL_PARCEL_DATE_VALID}
     ORDER BY pd.parcel_date ASC, pd.id ASC
   `
 
@@ -122,8 +147,8 @@ export async function findPaymentDatesInParcelMonthRange(
     id: Number(r.id),
     id_payment: Number(r.id_payment),
     parcel_value: Number(r.parcel_value),
-    parcel_date: toDateOrInvalid(r.parcel_date),
+    parcel_date: parseSqlDateYmd(r.parcel_ymd) ?? new Date(NaN),
     status: Number(r.status),
-    approved_date: parseApprovedYmd(r.approved_ymd),
+    approved_date: parseSqlDateYmd(r.approved_ymd),
   }))
 }

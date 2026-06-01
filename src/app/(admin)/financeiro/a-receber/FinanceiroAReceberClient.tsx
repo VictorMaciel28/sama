@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Badge, Button, Card, Col, Form, Modal, Row, Spinner, Table } from 'react-bootstrap'
 import { toast } from 'react-toastify'
 import 'react-toastify/dist/ReactToastify.css'
+import MercadoLivreModal from './MercadoLivreModal'
 
 function defaultMesYyyyMm(): string {
   const n = new Date()
@@ -78,6 +79,7 @@ export default function FinanceiroAReceberClient() {
   const [obsModal, setObsModal] = useState<ObsModalState>(null)
   const [parcelsModal, setParcelsModal] = useState<ParcelsModalState>(null)
   const [statusSavingPaymentId, setStatusSavingPaymentId] = useState<number | null>(null)
+  const [mercadoLivreOpen, setMercadoLivreOpen] = useState(false)
 
   const mesLegenda = useMemo(() => formatMesLabel(filterMes), [filterMes])
 
@@ -251,14 +253,14 @@ export default function FinanceiroAReceberClient() {
           <div className="d-flex flex-wrap align-items-center justify-content-between gap-2 mb-3">
             <span className="text-muted small">{loading ? 'Carregando…' : `${rows.length} registro(s)`}</span>
             <Button
-              variant="outline-secondary"
+              variant="outline-primary"
               size="sm"
-              onClick={() => load()}
+              onClick={() => setMercadoLivreOpen(true)}
               disabled={loading}
               className="d-inline-flex align-items-center gap-1"
             >
-              <IconifyIcon icon="ri:refresh-line" className="fs-16" />
-              Atualizar
+              <IconifyIcon icon="ri:store-2-line" className="fs-16" />
+              Mercado Livre
             </Button>
           </div>
 
@@ -485,6 +487,8 @@ export default function FinanceiroAReceberClient() {
           </Button>
         </Modal.Footer>
       </Modal>
+
+      <MercadoLivreModal show={mercadoLivreOpen} onHide={() => setMercadoLivreOpen(false)} />
     </>
   )
 }

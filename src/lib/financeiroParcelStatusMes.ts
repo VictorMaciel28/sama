@@ -1,3 +1,4 @@
+import { SQL_PARCEL_DATE_VALID } from '@/lib/financeiroPaymentDateRows'
 import { prisma } from '@/lib/prisma'
 import { monthParcelDateBounds, type YearMonth } from '@/lib/financeiroMesBounds'
 import type { FinanceiroPaymentDateRow } from '@/lib/financeiroPaymentDateRows'
@@ -80,15 +81,16 @@ export async function updateParcelStatusMes(args: {
 
   const { gte, lte } = monthParcelDateBounds(args.ym)
 
-  const result = await prisma.payment_date.updateMany({
-    where: {
-      id_payment: args.paymentId,
-      parcel_date: { gte, lte },
-    },
-    data: { status: statusRow.code },
-  })
+  const result = await prisma.$executeRaw`
+    UPDATE payment_date pd
+    SET pd.status = ${statusRow.code}
+    WHERE pd.id_payment = ${args.paymentId}
+      AND pd.parcel_date >= ${gte}
+      AND pd.parcel_date <= ${lte}
+      ${SQL_PARCEL_DATE_VALID}
+  `
 
-  return { ok: true, count: result.count }
+  return { ok: true, count: Number(result) || 0 }
 }
 
 /** Nome usado pelas rotas `parcelas-status` (a-pagar / a-receber). */

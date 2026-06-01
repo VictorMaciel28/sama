@@ -19,11 +19,10 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       return NextResponse.json({ ok: false, error: 'Status inválido' }, { status: 400 })
     }
 
-    const parcel = await prisma.payment_date.findFirst({
-      where: { id },
-      select: { id: true },
-    })
-    if (!parcel) {
+    const found = await prisma.$queryRaw<Array<{ id: unknown }>>`
+      SELECT pd.id FROM payment_date pd WHERE pd.id = ${id} LIMIT 1
+    `
+    if (found.length === 0) {
       return NextResponse.json({ ok: false, error: 'Parcela não encontrada' }, { status: 404 })
     }
 
@@ -34,10 +33,9 @@ export async function PATCH(req: Request, { params }: { params: { id: string } }
       return NextResponse.json({ ok: false, error: 'Status inválido' }, { status: 400 })
     }
 
-    await prisma.payment_date.update({
-      where: { id },
-      data: { status: statusRow.code },
-    })
+    await prisma.$executeRaw`
+      UPDATE payment_date SET status = ${statusRow.code} WHERE id = ${id}
+    `
 
     return NextResponse.json({ ok: true })
   } catch (error: any) {

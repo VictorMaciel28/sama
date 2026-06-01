@@ -18,18 +18,20 @@ const AppProvidersWrapper = ({ children, session }: ChildrenType & { session?: S
   }
 
   useEffect(() => {
-    if (document) {
-      const e = document.querySelector<HTMLDivElement>('#__next_splash')
-      if (e?.hasChildNodes()) {
-        document.querySelector('#splash-screen')?.classList.add('remove')
-      }
-      e?.addEventListener('DOMNodeInserted', () => {
-        document.querySelector('#splash-screen')?.classList.add('remove')
-      })
+    const removeSplash = () => {
+      document.getElementById('splash-screen')?.classList.add('remove')
     }
+
+    removeSplash()
+    const t1 = window.setTimeout(removeSplash, 50)
+    const t2 = window.setTimeout(removeSplash, 500)
+    window.addEventListener('load', removeSplash)
 
     document.addEventListener('visibilitychange', handleChangeTitle)
     return () => {
+      window.clearTimeout(t1)
+      window.clearTimeout(t2)
+      window.removeEventListener('load', removeSplash)
       document.removeEventListener('visibilitychange', handleChangeTitle)
     }
   }, [])

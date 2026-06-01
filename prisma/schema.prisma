@@ -754,3 +754,14 @@ model stock_separation_order {
   @@unique([separation_id, order_numero], map: "uk_separation_order")
   @@index([order_numero], map: "idx_separation_order_numero")
 }
+
+/// Valores manuais Mercado Livre (fluxo de caixa realizado), por ano/mês.
+model fluxo_caixa_mercado_livre {
+  id         Int      @id @default(autoincrement())
+  year       Int
+  month      Int      @db.TinyInt
+  value      Float    @default(0) @db.Float
+  updated_at DateTime @default(now()) @updatedAt @db.DateTime(0)
+
+  @@unique([year, month], map: "uk_fluxo_ml_year_month")
+}

@@ -1,7 +1,11 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { sessionIsFinanceiroAdmin } from '@/lib/financeiroAdminAuth'
-import { findPaymentDatesByPaymentIds, type FinanceiroPaymentDateRow } from '@/lib/financeiroPaymentDateRows'
+import {
+  findPaymentDatesByPaymentIds,
+  findPaymentIdsByParcelMonthRange,
+  type FinanceiroPaymentDateRow,
+} from '@/lib/financeiroPaymentDateRows'
 import {
   listPaymentStatusOptions,
   parcelStatusForFilteredMonth,
@@ -39,13 +43,7 @@ export async function GET(req: Request) {
     const ym = parseMonthQueryParam(searchParams.get('mes'))
     const { gte, lte } = monthParcelDateBounds(ym)
 
-    const parcelRows = await prisma.payment_date.findMany({
-      where: {
-        parcel_date: { gte, lte },
-      },
-      select: { id_payment: true },
-    })
-    const paymentIdsInMonth = [...new Set(parcelRows.map((r) => r.id_payment))]
+    const paymentIdsInMonth = await findPaymentIdsByParcelMonthRange(gte, lte)
 
     if (paymentIdsInMonth.length === 0) {
       const payment_statuses = await listPaymentStatusOptions()

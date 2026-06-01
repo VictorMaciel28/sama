@@ -117,6 +117,13 @@ export const MENU_ITEMS: MenuItemType[] = [
         url: '/financeiro/calendario',
         parentKey: 'financeiro',
       },
+      {
+        key: 'financeiro-fluxo-de-caixa',
+        label: 'Fluxo de caixa',
+        icon: 'ri:flow-chart',
+        url: '/fluxo-de-caixa',
+        parentKey: 'financeiro',
+      },
     ],
   },
   // {
