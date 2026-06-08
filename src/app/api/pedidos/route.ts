@@ -5,6 +5,7 @@ import { options } from '@/app/api/auth/[...nextauth]/options'
 import { tinyV2Post, tinyV2PostWithJsonParam } from '@/lib/tinyOAuth'
 import { assertUserCanEditPedidoPlataforma } from '@/lib/pedidoOrderAccess'
 import { formatSqlDateOnly, parseYmdToSqlDate, todayCalendarYmdUtc } from '@/lib/calendarDate'
+import { DEFAULT_PLATFORM_ORDER_COMPANY_ID, resolvePlatformOrderCompanyId } from '@/lib/platformOrderCompany'
 
 function formatBrDate(iso: string) {
   const s = String(iso || '').slice(0, 10)
@@ -66,6 +67,8 @@ export async function GET(req: Request) {
 
     const whereBase: any = {
       NOT: { status: 'PROPOSTA' as any },
+      company_id: DEFAULT_PLATFORM_ORDER_COMPANY_ID,
+      sistema_origem: { not: 'comercial' },
     }
     if (statusEnum) whereBase.status = statusEnum
     if (search) {
@@ -533,6 +536,12 @@ export async function POST(req: Request) {
       existingPlatformOrder.status === ('PROPOSTA' as any) &&
       platformStatusPersist === 'PENDENTE'
 
+    const company_id = resolvePlatformOrderCompanyId(
+      { company_id: body?.company_id, company: body?.company },
+      existingPlatformOrder?.company_id ?? null,
+      { applyDefault: !existingPlatformOrder || isEvolvingProposta }
+    )
+
     const pedidoV2Obj: any = {
       data_pedido: formatBrDate(toIsoDate(body?.data)),
       cliente: ufValida ? clienteV2 : { ...clienteV2, uf: '' },
@@ -663,6 +672,7 @@ export async function POST(req: Request) {
           data: dataStr ? parseYmdToSqlDate(dataStr) : parseYmdToSqlDate(todayCalendarYmdUtc()),
           cliente: String((rawCliente?.nome as string) ?? (body?.cliente || '')).toString(),
           cnpj: String((rawCliente?.cpf_cnpj as string) ?? (body?.cnpj || '')).toString(),
+          company_id,
           total: total,
           status: 'PENDENTE',
           forma_recebimento,
@@ -729,6 +739,11 @@ export async function POST(req: Request) {
         data: dataStr ? parseYmdToSqlDate(dataStr) : parseYmdToSqlDate(todayCalendarYmdUtc()),
         cliente: String((rawCliente?.nome as string) ?? (body?.cliente || '')).toString(),
         cnpj: String((rawCliente?.cpf_cnpj as string) ?? (body?.cnpj || '')).toString(),
+        company_id: resolvePlatformOrderCompanyId(
+          { company_id: body?.company_id, company: body?.company },
+          existingPlatformOrder?.company_id ?? null,
+          { applyDefault: false }
+        ),
         total: total,
         status: platformStatusPersist,
         forma_recebimento,
@@ -837,6 +852,7 @@ export async function POST(req: Request) {
           data: dataStr ? parseYmdToSqlDate(dataStr) : parseYmdToSqlDate(todayCalendarYmdUtc()),
           cliente: String((rawCliente?.nome as string) ?? (body?.cliente || '')).toString(),
           cnpj: String((rawCliente?.cpf_cnpj as string) ?? (body?.cnpj || '')).toString(),
+          company_id,
           total: total,
           status: platformStatus,
           forma_recebimento,

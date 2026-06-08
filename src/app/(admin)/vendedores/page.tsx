@@ -5,6 +5,11 @@ import { useRouter } from 'next/navigation'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
 import { Form, Row, Col, Modal } from 'react-bootstrap'
 import styles from './page.module.css'
+import {
+  labelVendedorTipoAcesso,
+  VENDEDOR_TIPO_ACESSO_OPTIONS,
+  type VendedorTipoAcessoValue,
+} from '@/lib/vendedorTipoAcesso'
 
 type SupervisorRow = {
   id: number
@@ -18,7 +23,7 @@ type Vendedor = {
   nome: string
   email?: string | null
   telefone?: string | null
-  tipo_acesso?: 'VENDEDOR' | 'TELEVENDAS' | null
+  tipo_acesso?: VendedorTipoAcessoValue | null
   nivel_acesso?: 'SUPERVISOR' | 'ADMINISTRADOR' | 'OPERADOR' | null
   senha?: string | null
   razao_social?: string | null
@@ -55,7 +60,7 @@ export default function VendedoresPage() {
   const [formNome, setFormNome] = useState('')
   const [formEmail, setFormEmail] = useState<string | ''>('')
   const [formTelefone, setFormTelefone] = useState('')
-  const [formTipo, setFormTipo] = useState<'VENDEDOR' | 'TELEVENDAS' | ''>('')
+  const [formTipo, setFormTipo] = useState<VendedorTipoAcessoValue | ''>('')
   const [formNivel, setFormNivel] = useState<'SUPERVISOR' | 'ADMINISTRADOR' | 'OPERADOR' | ''>('')
   const [formRazaoSocial, setFormRazaoSocial] = useState('')
   const [formEnderecoRazao, setFormEnderecoRazao] = useState('')
@@ -215,16 +220,12 @@ export default function VendedoresPage() {
         alert('Nome, e-mail e senha são obrigatórios para incluir usuário.')
         return
       }
-      if (!ext) {
-        alert('Informe o ID externo (mesmo ID do vendedor no Tiny ou um identificador único manual).')
-        return
-      }
       const payload: Record<string, unknown> = {
         action: 'create',
         nome: formNome.trim(),
         email: formEmail.trim(),
         password: formPassword,
-        id_vendedor_externo: ext,
+        id_vendedor_externo: ext || null,
         telefone: formTelefone.trim() || null,
         razao_social: formRazaoSocial.trim() || null,
         endereco_razao: formEnderecoRazao.trim() || null,
@@ -272,10 +273,10 @@ export default function VendedoresPage() {
       supervisor_responsavel_externo: formSupervisorExterno.trim() || null,
       observacao: formObservacao.trim() || null,
     }
+    payload.tipo_acesso = formTipo ? formTipo : null
+    payload.nivel_acesso = formNivel ? formNivel : null
     if (editing.id_vendedor_externo) {
       payload.id_vendedor_externo = editing.id_vendedor_externo
-      payload.tipo_acesso = formTipo ? formTipo : null
-      payload.nivel_acesso = formNivel ? formNivel : null
     }
     if (formPassword) payload.password = formPassword
 
@@ -341,7 +342,7 @@ export default function VendedoresPage() {
                       <td>{v.nome}</td>
                       <td>{v.email ?? '-'}</td>
                       <td>{v.telefone ?? '-'}</td>
-                      <td>{v.tipo_acesso ? (v.tipo_acesso === 'TELEVENDAS' ? 'Televendas' : 'Vendedor') : '-'}</td>
+                      <td>{labelVendedorTipoAcesso(v.tipo_acesso)}</td>
                       <td>{nivelLabel(v.nivel_acesso)}</td>
                       <td className="text-end" onClick={(e) => e.stopPropagation()}>
                         <div className="d-inline-flex align-items-center gap-1">
@@ -404,7 +405,7 @@ export default function VendedoresPage() {
                   placeholder="Ex.: ID do vendedor no Tiny"
                 />
                 {isCreating && (
-                  <Form.Text className="text-muted">Obrigatório. Deve ser único e coincidir com o Tiny se for o mesmo vendedor.</Form.Text>
+                  <Form.Text className="text-muted">Opcional. Use o ID do vendedor no Tiny quando houver vínculo.</Form.Text>
                 )}
               </Col>
               <Col md={8}>
@@ -483,26 +484,18 @@ export default function VendedoresPage() {
               </Col>
               <Col md={6}>
                 <Form.Label>Tipo de acesso</Form.Label>
-                <Form.Select
-                  value={formTipo}
-                  onChange={(e) => setFormTipo(e.target.value as any)}
-                  disabled={!(isCreating ? formIdExterno.trim() : editing?.id_vendedor_externo)}
-                >
+                <Form.Select value={formTipo} onChange={(e) => setFormTipo(e.target.value as any)}>
                   <option value="">Nenhum (remove)</option>
-                  <option value="VENDEDOR">Vendedor</option>
-                  <option value="TELEVENDAS">Televendas</option>
+                  {VENDEDOR_TIPO_ACESSO_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
                 </Form.Select>
-                {!(isCreating ? formIdExterno.trim() : editing?.id_vendedor_externo) && (
-                  <Form.Text className="text-muted">ID externo necessário para tipo/nível.</Form.Text>
-                )}
               </Col>
               <Col md={6}>
                 <Form.Label>Nível de acesso</Form.Label>
-                <Form.Select
-                  value={formNivel}
-                  onChange={(e) => setFormNivel(e.target.value as any)}
-                  disabled={!(isCreating ? formIdExterno.trim() : editing?.id_vendedor_externo)}
-                >
+                <Form.Select value={formNivel} onChange={(e) => setFormNivel(e.target.value as any)}>
                   <option value="">Nenhum (remove)</option>
                   <option value="SUPERVISOR">Supervisor</option>
                   <option value="ADMINISTRADOR">Administrador</option>
@@ -541,8 +534,7 @@ export default function VendedoresPage() {
                   </button>
                 </div>
                 <Form.Text className="text-muted">
-                  O login usa e-mail e senha. Administrador não precisa de &quot;Tipo de acesso&quot; (Vendedor/Televendas)
-                  para acessar o painel; basta nível Administrador (e ID externo alinhado ao cadastro).
+                  O login usa e-mail e senha. Vendedor Comercial sem ID externo acessa apenas o menu Comercial.
                 </Form.Text>
               </Col>
             </Row>

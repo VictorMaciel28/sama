@@ -33,21 +33,32 @@ const useSignIn = () => {
 
   const login = handleSubmit(async (values: LoginFormFields) => {
     setLoading(true)
-    signIn('credentials', {
-      redirect: false,
-      email: values?.email,
-      password: values?.password,
-    }).then((res) => {
+    try {
+      const res = await signIn('credentials', {
+        redirect: false,
+        email: values?.email,
+        password: values?.password,
+      })
       if (res?.ok) {
-        // Redireciona para a página de pedidos após login bem-sucedido
-        push(queryParams['redirectTo'] ?? '/pedidos')
-
+        let dest = queryParams['redirectTo'] ?? '/pedidos'
+        try {
+          const meRes = await fetch('/api/me/vendedor', { cache: 'no-store' })
+          const meJson = await meRes.json()
+          if (meJson?.ok && meJson?.data?.tipo === 'VENDEDOR_COMERCIAL') {
+            const rt = queryParams['redirectTo']
+            dest = rt && String(rt).startsWith('/comercial') ? String(rt) : '/comercial/orcamentos'
+          }
+        } catch {
+          /* mantém destino padrão */
+        }
+        push(dest)
         showNotification({ message: 'Successfully logged in. Redirecting....', variant: 'success' })
       } else {
         showNotification({ message: res?.error ?? '', variant: 'danger' })
       }
-    })
-    setLoading(false)
+    } finally {
+      setLoading(false)
+    }
   })
 
   return { loading, login, control }

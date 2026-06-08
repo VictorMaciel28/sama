@@ -1,5 +1,6 @@
 import Footer from '@/components/layout/Footer'
 import AuthProtectionWrapper from '@/components/wrappers/AuthProtectionWrapper'
+import ComercialRouteGuard from '@/components/wrappers/ComercialRouteGuard'
 import { ChildrenType } from '@/types/component-props'
 import dynamic from 'next/dynamic'
 import { Suspense } from 'react'
@@ -11,6 +12,7 @@ const VerticalNavigationBar = dynamic(() => import('@/components/layout/Vertical
 const AdminLayout = ({ children }: ChildrenType) => {
   return (
     <AuthProtectionWrapper>
+      <ComercialRouteGuard />
       <div className="wrapper">
         <Suspense>
           <TopNavigationBar />

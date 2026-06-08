@@ -5,6 +5,8 @@ export interface Pedido {
   data: string // ISO date: YYYY-MM-DD
   cliente: string
   cnpj: string
+  /** ID da empresa emissora (`company.id`, opcional). */
+  company_id?: string | null
   sistema_origem?: 'tiny' | 'sama' | string
   id_client_externo?: string | null
   total: number

@@ -1,12 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { useParams, useRouter, useSearchParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import PageTitle from '@/components/PageTitle'
 import { Card, Row, Col, Form, Button, Table, Modal, Spinner, OverlayTrigger, Tooltip, Pagination } from 'react-bootstrap'
-import { getPedidoByNumero, Pedido, PedidoStatus, getNextPedidoNumero, savePedido as savePedidoRemote } from '@/services/pedidos2'
-import { createProposta, updateProposta } from '@/services/propostas'
-import { DEFAULT_PLATFORM_ORDER_COMPANY_ID } from '@/lib/platformOrderCompany'
+import { Pedido, PedidoStatus, getNextPedidoNumero } from '@/services/pedidos2'
+import {
+  createComercialOrcamento,
+  getComercialPedidoByNumero,
+  saveComercialPedido,
+  updateComercialOrcamento,
+} from '@/services/comercialPedidos'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
 import {
   formatPaymentConditionSelectValue,
@@ -25,6 +29,14 @@ import {
 
 const requestCache = new Map<string, { ts: number; data: any }>()
 const requestInFlight = new Map<string, Promise<any>>()
+
+function formatEmpresaCnpj(cnpj: string) {
+  const digits = String(cnpj || '').replace(/\D/g, '')
+  if (digits.length !== 14) return cnpj
+  return digits.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5')
+}
+
+type EmpresaOption = { id: string; nome: string; cnpj: string }
 
 async function fetchJsonCached(url: string, ttlMs = 4000) {
   const now = Date.now()
@@ -179,11 +191,12 @@ function intersectTinyWithCarteiraSet(localRows: ClientSuggestion[], tinyRows: P
   return Array.from(map.values())
 }
 
-export default function PedidoFormPage() {
+export type ComercialPedidoFormMode = 'orcamento' | 'pedido'
+
+export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFormMode }) {
   const params = useParams()
   const router = useRouter()
-  const searchParams = useSearchParams()
-  const entityParam = searchParams?.get('entity') ?? ''
+  const entityParam = mode === 'orcamento' ? 'orcamento' : ''
   const idParam = useMemo(() => Number(params?.id ?? 0), [params])
   const isNew = idParam === 0
 
@@ -192,11 +205,12 @@ export default function PedidoFormPage() {
     data: todayCalendarYmdLocal(),
     cliente: '',
     cnpj: '',
-    company_id: DEFAULT_PLATFORM_ORDER_COMPANY_ID,
     total: 0,
-    status: entityParam === 'proposta' ? 'Proposta' : 'Pendente',
+    status: entityParam === 'orcamento' ? 'Proposta' : 'Pendente',
   })
 
+  const [empresas, setEmpresas] = useState<EmpresaOption[]>([])
+  const [companyId, setCompanyId] = useState('')
   const [formaRecebimento, setFormaRecebimento] = useState('Boleto')
   const [condicaoPagamento, setCondicaoPagamento] = useState('')
   /** Admin/supervisor: catálogo (`payment_condition`) vs texto livre (ex.: 30/60/90 para o Tiny). */
@@ -209,6 +223,17 @@ export default function PedidoFormPage() {
     setModoCondicaoCatalogo(true)
   }, [idParam])
   const [receiveForms, setReceiveForms] = useState<Array<{ id: number; nome: string; situacao: number }>>([])
+
+  useEffect(() => {
+    ;(async () => {
+      try {
+        const json = await fetchJsonCached('/api/comercial/empresas', 60_000)
+        if (json?.ok && Array.isArray(json.data)) setEmpresas(json.data)
+      } catch {
+        /* ignore */
+      }
+    })()
+  }, [])
 
   type ItemPedido = { id: number; nome: string; sku?: string; quantidade: number; unidade: string; preco: number; estoque?: number; produtoId?: number; imagemUrl?: string }
   const [itens, setItens] = useState<ItemPedido[]>([])
@@ -562,7 +587,7 @@ export default function PedidoFormPage() {
   useEffect(() => {
     (async () => {
       if (!isNew) {
-        const existing = await getPedidoByNumero(idParam)
+        const existing = await getComercialPedidoByNumero(idParam, mode)
         if (existing) {
           setForm(existing)
           const loadedItems = Array.isArray((existing as any)?.itens) ? (existing as any).itens : []
@@ -580,6 +605,7 @@ export default function PedidoFormPage() {
           )
           setFormaRecebimento(existing.forma_recebimento || 'Boleto')
           setCondicaoPagamento(existing.condicao_pagamento || '')
+          setCompanyId(String((existing as any).company_id || ''))
           const addr = (existing as any)?.endereco_entrega || {}
 
           const linkedVendedor = (existing as any)?.selected_vendedor
@@ -659,7 +685,7 @@ export default function PedidoFormPage() {
         setForm((f) => ({ ...f, numero: 0 }))
       }
     })()
-  }, [idParam, isNew])
+  }, [idParam, isNew, mode])
 
   const loadCatalog = useCallback(async (q: string, page: number) => {
     setCatalogLoading(true)
@@ -1321,9 +1347,8 @@ export default function PedidoFormPage() {
     setIsSubmitting(true)
 
     try {
-      // Block submit if parcel validation fails
-      if (pagamentoParceladoErro) {
-        setSubmitError(pagamentoParceladoErro)
+      if (!companyId.trim()) {
+        setSubmitError('Selecione a empresa')
         setIsSubmitting(false)
         return
       }
@@ -1338,14 +1363,15 @@ export default function PedidoFormPage() {
       const tinyParcelas: any[] | undefined = undefined
 
       // Determine if this submission is a proposta via search param
-      if (entityParam === 'proposta') {
+      if (entityParam === 'orcamento') {
         // prepare payload ensuring cliente is an object with nome and cpf_cnpj
         const payloadProposal: any = {
           ...form,
           status: 'Proposta',
           total: totalComDesconto,
           forma_recebimento: formaRecebimento,
-          condicao_pagamento: condicaoPagamento,
+          condicao_pagamento: null,
+          company_id: companyId,
           idContato: selectedClient?.external_id ? Number(selectedClient.external_id) : 0,
           id_vendedor_externo: pedidoRepresentanteExterno.trim() || meVendedor?.id_vendedor_externo || null,
           client_vendor_externo: carteiraRepresentanteExterno,
@@ -1390,17 +1416,17 @@ export default function PedidoFormPage() {
         }
         payloadProposal.juros_ligado = true
         if (isNew) {
-          await createProposta(payloadProposal as any)
+          await createComercialOrcamento(payloadProposal as any)
         } else {
           const n = Number(form.numero || 0)
           if (!n) {
-            setSubmitError('Número da proposta inválido')
+            setSubmitError('Número do orçamento inválido')
             setIsSubmitting(false)
             return
           }
-          await updateProposta(n, payloadProposal as any)
+          await updateComercialOrcamento(n, payloadProposal as any)
         }
-        router.push('/propostas')
+        router.push('/comercial/orcamentos')
         return
       }
 
@@ -1422,7 +1448,8 @@ export default function PedidoFormPage() {
         ...form,
         total: totalComDesconto,
         forma_recebimento: formaRecebimento,
-        condicao_pagamento: condicaoPagamento,
+        condicao_pagamento: null,
+        company_id: companyId,
         juros_ligado: true,
         idContato,
         id_vendedor_externo: pedidoRepresentanteExterno.trim() || null,
@@ -1492,9 +1519,8 @@ export default function PedidoFormPage() {
           payloadToSend.itens = mappedItems
         }
       }
-      const saved = await savePedidoRemote(payloadToSend)
-      // After successful order submission, always return to order listing.
-      router.push('/pedidos')
+      await saveComercialPedido(payloadToSend)
+      router.push('/comercial/pedidos')
       return
     } catch (err: any) {
       setSubmitError('Erro inesperado ao enviar o pedido')
@@ -1841,10 +1867,10 @@ export default function PedidoFormPage() {
   }
 
   const headerTitle = (() => {
-    if (entityParam === 'proposta') {
-      return isNew ? `Proposta de venda` : `Proposta de venda ${form.numero}`
+    if (entityParam === 'orcamento') {
+      return isNew ? `Orçamento comercial` : `Orçamento comercial ${form.numero}`
     }
-    return isNew ? `Pedido de venda ${getNextPedidoNumero()}` : `Pedido de venda ${form.numero}`
+    return isNew ? `Pedido de venda comercial` : `Pedido de venda comercial ${form.numero}`
   })()
 
   return (
@@ -1904,7 +1930,31 @@ export default function PedidoFormPage() {
                 word-break: break-word;
               }
             `}</style>
-            <Col lg={mostrarDoisCamposRepresentante ? 3 : 4}>
+            <Col lg={2}>
+              <Form.Label>Empresa</Form.Label>
+              <Form.Select
+                className="text-truncate"
+                value={companyId}
+                onChange={(e) => setCompanyId(e.target.value)}
+                required
+                title={
+                  companyId
+                    ? (() => {
+                        const emp = empresas.find((e) => e.id === companyId)
+                        return emp ? `${emp.nome} — CNPJ ${formatEmpresaCnpj(emp.cnpj)}` : ''
+                      })()
+                    : undefined
+                }
+              >
+                <option value="">Selecione</option>
+                {empresas.map((emp) => (
+                  <option key={emp.id} value={emp.id} title={`${emp.nome} — CNPJ ${formatEmpresaCnpj(emp.cnpj)}`}>
+                    {emp.nome} — {formatEmpresaCnpj(emp.cnpj)}
+                  </option>
+                ))}
+              </Form.Select>
+            </Col>
+            <Col lg={mostrarDoisCamposRepresentante ? 2 : mostrarSoUmVendedor ? 3 : 4}>
               <Form.Label>Cliente</Form.Label>
               <div className="position-relative">
                 <Form.Control
@@ -1992,7 +2042,7 @@ export default function PedidoFormPage() {
             )}
             <Col lg={2}>
               <Form.Label>Forma de recebimento</Form.Label>
-              <Form.Select value={formaRecebimento} onChange={(e) => { setFormaRecebimento(e.target.value); setCondicaoPagamento(''); setDescontoPercent(0) }}>
+              <Form.Select value={formaRecebimento} onChange={(e) => { setFormaRecebimento(e.target.value); setDescontoPercent(0) }}>
                 {receiveForms.length > 0 ? (
                   receiveForms.map((rf) => (
                     <option key={rf.id} value={rf.nome}>{rf.nome}</option>
@@ -2006,83 +2056,6 @@ export default function PedidoFormPage() {
                   </>
                 )}
               </Form.Select>
-            </Col>
-            <Col lg={mostrarDoisCamposRepresentante ? 3 : 4}>
-              <div className="d-flex justify-content-between align-items-center gap-2 mb-1">
-                <Form.Label className="mb-0">Condição de pagamento</Form.Label>
-                {podeCondicaoPersonalizada ? (
-                  <Form.Check
-                    type="switch"
-                    id="condicao-pagamento-livre"
-                    className="mb-0 small"
-                    label="Customizada"
-                    checked={!modoCondicaoCatalogo}
-                    onChange={(e) => {
-                      const livre = e.target.checked
-                      setModoCondicaoCatalogo(!livre)
-                      if (livre) {
-                        if (parsePaymentConditionSelectValue(condicaoPagamento) != null && resolvedCondicao) {
-                          setCondicaoPagamento(resolvedCondicao.name)
-                        }
-                      } else {
-                        setCondicaoPagamento('')
-                      }
-                    }}
-                  />
-                ) : null}
-              </div>
-              {podeCondicaoPersonalizada && !modoCondicaoCatalogo ? (
-                <>
-                  <Form.Control
-                    value={condicaoPagamento}
-                    onChange={(e) => setCondicaoPagamento(e.target.value.slice(0, 100))}
-                    placeholder="Ex.: 30/60/90, À vista, 45 dias direto…"
-                    maxLength={100}
-                    autoComplete="off"
-                  />
-                </>
-              ) : (
-                <Form.Select
-                  value={condicaoPagamento}
-                  onChange={(e) => setCondicaoPagamento(e.target.value)}
-                >
-                  <option value="">Selecione</option>
-                  {condicaoDespadronizada && condicaoPagamento ? (
-                    <option value={condicaoPagamento}>
-                      {isTinyOrder ? `${condicaoPagamento} (Despadronizado)` : condicaoPagamento}
-                    </option>
-                  ) : null}
-                  {!paymentConditions.some((c) => c.name.trim() === 'À vista') ? (
-                    <option value="À vista">À vista</option>
-                  ) : null}
-                  {!paymentConditions.some((c) => c.name.trim() === '7 dias') ? (
-                    <option value="7 dias">7 dias</option>
-                  ) : null}
-                  {PAYMENT_ADMIN_TIER_ORDER.map((tier) => {
-                    const tierConds = paymentConditions.filter((c) => c.admin_tier === tier)
-                    if (tierConds.length === 0) return null
-                    return (
-                      <optgroup key={tier} label={PAYMENT_ADMIN_TIER_LABELS[tier] ?? `Faixa ${tier}`}>
-                        {tierConds.map((c) => {
-                          const minStr =
-                            c.valor_minimo != null && c.valor_minimo > 0
-                              ? Number(c.valor_minimo).toLocaleString('pt-BR', {
-                                  minimumFractionDigits: 0,
-                                  maximumFractionDigits: 2,
-                                })
-                              : ''
-                          const labelText = minStr !== '' ? `${c.name} (Min. ${minStr})` : c.name
-                          return (
-                            <option key={c.id} value={formatPaymentConditionSelectValue(c.id)}>
-                              {labelText}
-                            </option>
-                          )
-                        })}
-                      </optgroup>
-                    )
-                  })}
-                </Form.Select>
-              )}
             </Col>
             {/* removed extra placeholder column */}
           </Row>
@@ -2163,7 +2136,6 @@ export default function PedidoFormPage() {
       </Card>
 
       {/* Sessão 2 - Produtos */} 
-      {condicaoPagamento && (
         <Card className="border-0 shadow-sm mb-3">
           <Card.Body>
           <div className="mb-3">
@@ -2357,10 +2329,8 @@ export default function PedidoFormPage() {
           </div>
           </Card.Body>
         </Card>
-      )}
 
       {/* Sessão 3 - Pagamento */} 
-      {condicaoPagamento && (
         <Card className="border-0 shadow-sm">
           <Card.Header className="bg-white fw-semibold">Pagamento</Card.Header>
           <Card.Body>
@@ -2505,15 +2475,15 @@ export default function PedidoFormPage() {
             </div>
 
             <div className="d-flex align-items-center justify-content-between gap-2 mt-4">
-              <Button variant="secondary" onClick={() => router.push(entityParam === 'proposta' ? '/propostas' : '/pedidos')}>
+              <Button variant="secondary" onClick={() => router.push(entityParam === 'orcamento' ? '/comercial/orcamentos' : '/comercial/pedidos')}>
                 Cancelar
               </Button>
-              {(entityParam === 'proposta' || isAdminUser || isNew) && (
+              {(entityParam === 'orcamento' || isAdminUser || isNew) && (
                 <Button
                   type="submit"
-                  disabled={!!pagamentoParceladoErro || isSubmitting}
+                  disabled={isSubmitting}
                 >
-                  {entityParam === 'proposta'
+                  {entityParam === 'orcamento'
                     ? isNew
                       ? 'Enviar Proposta'
                       : 'Salvar alterações'
@@ -2526,7 +2496,6 @@ export default function PedidoFormPage() {
           </Form>
           </Card.Body>
         </Card>
-      )}
 
       <Modal show={showPreview} onHide={() => setShowPreview(false)} centered>
         <Modal.Header closeButton>

@@ -4,6 +4,7 @@ import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
 import { formatSqlDateOnly, parseYmdToSqlDate, todayCalendarYmdUtc } from '@/lib/calendarDate'
 import { findVendedorForAuthSession } from '@/lib/vendedorFromSession'
+import { DEFAULT_PLATFORM_ORDER_COMPANY_ID, resolvePlatformOrderCompanyId } from '@/lib/platformOrderCompany'
 
 function pickStr(body: Record<string, unknown>, key: string, maxLen: number): string | null {
   const v = body[key]
@@ -60,7 +61,11 @@ export async function GET() {
 
     if (isAdmin) {
       rows = await prisma.platform_order.findMany({
-        where: { status: 'PROPOSTA' as any },
+        where: {
+          status: 'PROPOSTA' as any,
+          company_id: DEFAULT_PLATFORM_ORDER_COMPANY_ID,
+          sistema_origem: { not: 'comercial' },
+        },
         orderBy: { created_at: 'desc' },
         include: proposalInclude,
       })
@@ -69,6 +74,8 @@ export async function GET() {
       rows = await prisma.platform_order.findMany({
         where: {
           status: 'PROPOSTA' as any,
+          company_id: DEFAULT_PLATFORM_ORDER_COMPANY_ID,
+          sistema_origem: { not: 'comercial' },
           id_vendedor_externo,
         },
         orderBy: { created_at: 'desc' },
@@ -81,6 +88,7 @@ export async function GET() {
       data: formatSqlDateOnly(r.data),
       cliente: r.cliente,
       cnpj: r.cnpj,
+      company_id: r.company_id ?? null,
       total: Number(r.total),
       status: 'Proposta',
       forma_recebimento: r.forma_recebimento ?? null,
@@ -162,6 +170,12 @@ export async function POST(req: Request) {
         ? (body.endereco_entrega as object)
         : undefined
 
+    const company_id = resolvePlatformOrderCompanyId(
+      { company_id: body?.company_id, company: body?.company },
+      null,
+      { applyDefault: true }
+    )
+
     const created = await prisma.platform_order.create({
       data: {
         numero: nextNumero,
@@ -169,6 +183,7 @@ export async function POST(req: Request) {
         data: dataStr ? parseYmdToSqlDate(dataStr) : parseYmdToSqlDate(todayCalendarYmdUtc()),
         cliente,
         cnpj,
+        company_id,
         total,
         status: 'PROPOSTA' as any,
         forma_recebimento,

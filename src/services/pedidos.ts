@@ -13,6 +13,7 @@ export interface Pedido {
   data: string // ISO date: YYYY-MM-DD
   cliente: string
   cnpj: string
+  company_id?: string | null
   id_client_externo?: string | null
   total: number
   status: PedidoStatus

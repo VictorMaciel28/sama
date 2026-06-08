@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation'
 import { Button, Form, Modal, Spinner } from 'react-bootstrap'
 import { useNotificationContext } from '@/context/useNotificationContext'
 import IconifyIcon from '@/components/wrappers/IconifyIcon'
+import { labelVendedorTipoAcesso, type VendedorTipoAcessoValue } from '@/lib/vendedorTipoAcesso'
 
 type Row = {
   id: number
@@ -12,7 +13,7 @@ type Row = {
   nome: string
   email?: string | null
   telefone?: string | null
-  tipo_acesso?: 'VENDEDOR' | 'TELEVENDAS' | null
+  tipo_acesso?: VendedorTipoAcessoValue | null
   nivel_acesso?: 'SUPERVISOR' | 'ADMINISTRADOR' | 'OPERADOR' | null
 }
 
@@ -262,7 +263,7 @@ export default function SupervisorVendedoresPage() {
                       <td>{v.nome}</td>
                       <td>{v.email ?? '-'}</td>
                       <td>{v.telefone ?? '-'}</td>
-                      <td>{v.tipo_acesso ? (v.tipo_acesso === 'TELEVENDAS' ? 'Televendas' : 'Vendedor') : '-'}</td>
+                      <td>{labelVendedorTipoAcesso(v.tipo_acesso)}</td>
                       <td>{nivelLabel(v.nivel_acesso)}</td>
                       <td className="text-end" onClick={(e) => e.stopPropagation()}>
                         {v.id_vendedor_externo ? (

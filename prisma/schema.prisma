@@ -137,6 +137,7 @@ model telemarketing_city {
 enum VendedorTipoAcesso {
   VENDEDOR
   TELEVENDAS
+  VENDEDOR_COMERCIAL
 }
 
 enum NivelAcesso {
@@ -172,12 +173,23 @@ enum PedidoStatus {
   DADOS_INCOMPLETOS
 }
 
+model company {
+  id              String           @id @db.VarChar(40)
+  nome            String           @db.VarChar(255)
+  cnpj            String           @db.VarChar(20)
+  platform_orders platform_order[]
+
+  @@index([cnpj], map: "idx_company_cnpj")
+}
+
 model platform_order {
   id                   Int           @id @default(autoincrement())
   numero               Int           @unique
   data                 DateTime      @db.Date
   cliente              String        @db.VarChar(255)
   cnpj                 String        @db.VarChar(20)
+  /// Empresa emissora (mesmos IDs de Suprimentos → Ordem de compra).
+  company_id           String?       @db.VarChar(40)
   total                Decimal       @default(0) @db.Decimal(15, 2)
   status               PedidoStatus
   forma_recebimento    String?       @db.VarChar(50)
@@ -194,10 +206,13 @@ model platform_order {
   created_at           DateTime      @default(now()) @db.DateTime(0)
   updated_at           DateTime      @updatedAt @db.DateTime(0)
   cliente_rel          cliente?      @relation(fields: [id_client_externo], references: [external_id], onDelete: SetNull)
+  company_rel          company?      @relation(fields: [company_id], references: [id], onDelete: SetNull)
   commissions          platform_commission[]
   products             platform_order_product[]
   envios               platform_order_envio[]
   stock_separation_orders stock_separation_order[] @relation("StockSeparationOrderPedido")
+
+  @@index([company_id], map: "idx_platform_order_company")
 }
 
 model platform_order_status_history {

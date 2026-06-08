@@ -3,6 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { getServerSession } from 'next-auth'
 import { options } from '@/app/api/auth/[...nextauth]/options'
 import { findVendedorForAuthSession } from '@/lib/vendedorFromSession'
+import { vendedorAccessKey } from '@/lib/vendedorAccessKey'
 
 export async function GET() {
   try {
@@ -13,33 +14,20 @@ export async function GET() {
     if (!vend) return NextResponse.json({ ok: true, data: null })
 
     const email = session.user.email || vend.email || null
-    if (!vend.id_vendedor_externo) {
-      return NextResponse.json({
-        ok: true,
-        data: {
-          email,
-          id_vendedor_externo: null,
-          nome: vend.nome,
-          tipo: null,
-          is_admin: false,
-          is_supervisor: false,
-          cidades: [],
-        },
-      })
-    }
+    const accessKey = vendedorAccessKey(vend)
+    const externo = vend.id_vendedor_externo?.trim() || null
 
-    const externo = vend.id_vendedor_externo
     /** Ausência de linha em `vendedor_tipo_acesso` não impede acesso: perfil vem de `vendedor_nivel_acesso`. */
-    const tipoRow = await prisma.vendedor_tipo_acesso.findUnique({ where: { id_vendedor_externo: externo } })
+    const tipoRow = await prisma.vendedor_tipo_acesso.findUnique({ where: { id_vendedor_externo: accessKey } })
     const tipo = tipoRow?.tipo ?? null
     const nivelRow = await prisma.vendedor_nivel_acesso
-      .findUnique({ where: { id_vendedor_externo: externo } })
+      .findUnique({ where: { id_vendedor_externo: accessKey } })
       .catch(() => null)
     const isAdmin = nivelRow?.nivel === 'ADMINISTRADOR'
     const isSupervisor = nivelRow?.nivel === 'SUPERVISOR'
 
     let cidades: string[] = []
-    if (tipo === 'TELEVENDAS') {
+    if (tipo === 'TELEVENDAS' && externo) {
       const tel = await prisma.telemarketing.findUnique({
         where: { id_vendedor_externo: externo },
         include: { cidades: true },

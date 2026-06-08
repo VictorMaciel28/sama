@@ -43,6 +43,7 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
       where: { numero },
       include: {
         cliente_rel: true,
+        company_rel: true,
         products: {
           orderBy: { id: 'asc' },
         },
@@ -186,6 +187,10 @@ export async function GET(_: Request, { params }: { params: { numero: string } }
       data: formatSqlDateOnly(row.data),
       cliente: row.cliente,
       cnpj: row.cnpj,
+      company_id: row.company_id ?? null,
+      company: row.company_rel
+        ? { id: row.company_rel.id, nome: row.company_rel.nome, cnpj: row.company_rel.cnpj }
+        : null,
       sistema_origem: String((row as any).sistema_origem || 'sama').toLowerCase(),
       id_client_externo: row.id_client_externo?.toString?.() ?? null,
       total: Number(row.total),

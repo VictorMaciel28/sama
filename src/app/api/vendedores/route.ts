@@ -4,6 +4,8 @@ import { NivelAcesso } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { encryptPassword, decryptPassword } from '@/lib/crypto'
 import { options } from '@/app/api/auth/[...nextauth]/options'
+import { isVendedorTipoAcessoValue, type VendedorTipoAcessoValue } from '@/lib/vendedorTipoAcesso'
+import { vendedorAccessKey } from '@/lib/vendedorAccessKey'
 
 function emptyToNull(v: unknown): string | null {
   if (v == null) return null
@@ -15,26 +17,27 @@ export async function GET() {
   try {
     const rows = await prisma.vendedor.findMany({ orderBy: { nome: 'asc' } })
 
+    const accessKeys = Array.from(new Set(rows.map((r) => vendedorAccessKey(r))))
     const externos = Array.from(
       new Set(rows.map((r) => r.id_vendedor_externo).filter((x): x is string => !!x))
     )
 
     const tipos =
-      externos.length > 0
+      accessKeys.length > 0
         ? await prisma.vendedor_tipo_acesso.findMany({
-            where: { id_vendedor_externo: { in: externos } },
+            where: { id_vendedor_externo: { in: accessKeys } },
           })
         : []
 
     const niveles =
-      externos.length > 0
+      accessKeys.length > 0
         ? await prisma.vendedor_nivel_acesso.findMany({
-            where: { id_vendedor_externo: { in: externos } },
+            where: { id_vendedor_externo: { in: accessKeys } },
           })
         : []
 
-    const tipoByExterno = new Map(tipos.map((t) => [t.id_vendedor_externo, t.tipo]))
-    const nivelByExterno = new Map(niveles.map((t) => [t.id_vendedor_externo, t.nivel]))
+    const tipoByKey = new Map(tipos.map((t) => [t.id_vendedor_externo, t.tipo]))
+    const nivelByKey = new Map(niveles.map((t) => [t.id_vendedor_externo, t.nivel]))
 
     const supLinks =
       externos.length > 0
@@ -62,10 +65,11 @@ export async function GET() {
         }
       })() : null
       const ext = r.id_vendedor_externo
+      const key = vendedorAccessKey(r)
       const obj: any = {
         ...r,
-        tipo_acesso: ext ? tipoByExterno.get(ext) ?? null : null,
-        nivel_acesso: ext ? nivelByExterno.get(ext) ?? null : null,
+        tipo_acesso: tipoByKey.get(key) ?? null,
+        nivel_acesso: nivelByKey.get(key) ?? null,
         senha: senhaPlain,
         /** Supervisor inferido do cadastro de supervisão (vínculo); preferir `supervisor_responsavel_externo` quando preenchido. */
         supervisor_via_vinculo_externo: ext ? supervisorExternoPorVendedor.get(ext) ?? null : null,
@@ -82,7 +86,7 @@ export async function GET() {
 
 async function applyTipoNivelAcesso(
   id_vendedor_externo: string,
-  tipo_acesso: 'VENDEDOR' | 'TELEVENDAS' | null | undefined,
+  tipo_acesso: VendedorTipoAcessoValue | null | undefined,
   nivel_acesso: 'SUPERVISOR' | 'ADMINISTRADOR' | 'OPERADOR' | null | undefined,
   hasTipoKey: boolean,
   hasNivelKey: boolean
@@ -119,18 +123,14 @@ export async function POST(req: Request) {
       const nome = body?.nome?.toString?.().trim?.() || ''
       const email = body?.email?.toString?.().trim?.() || ''
       const password = typeof body?.password === 'string' ? body.password.trim() : ''
-      const id_vendedor_externo = body?.id_vendedor_externo?.toString?.().trim?.() || ''
+      const id_vendedor_externo = emptyToNull(body?.id_vendedor_externo)
       if (!nome) return NextResponse.json({ ok: false, error: 'Nome é obrigatório' }, { status: 400 })
       if (!email) return NextResponse.json({ ok: false, error: 'E-mail é obrigatório' }, { status: 400 })
       if (!password) return NextResponse.json({ ok: false, error: 'Senha é obrigatória' }, { status: 400 })
-      if (!id_vendedor_externo) {
-        return NextResponse.json(
-          { ok: false, error: 'ID externo é obrigatório (mesmo ID do vendedor no Tiny ou um identificador manual único)' },
-          { status: 400 }
-        )
-      }
       const dup = await prisma.vendedor.findFirst({
-        where: { OR: [{ email }, { id_vendedor_externo }] },
+        where: {
+          OR: [{ email }, ...(id_vendedor_externo ? [{ id_vendedor_externo }] : [])],
+        },
         select: { id: true, email: true, id_vendedor_externo: true },
       })
       if (dup) {
@@ -139,12 +139,12 @@ export async function POST(req: Request) {
       }
       const hasTipoKey = Object.prototype.hasOwnProperty.call(body, 'tipo_acesso')
       const hasNivelKey = Object.prototype.hasOwnProperty.call(body, 'nivel_acesso')
-      let tipo_acesso: 'VENDEDOR' | 'TELEVENDAS' | null | undefined
+      let tipo_acesso: VendedorTipoAcessoValue | null | undefined
       let nivel_acesso: 'SUPERVISOR' | 'ADMINISTRADOR' | 'OPERADOR' | null | undefined
       if (hasTipoKey) {
         const t = body.tipo_acesso
         if (t == null || t === '') tipo_acesso = null
-        else if (t === 'VENDEDOR' || t === 'TELEVENDAS') tipo_acesso = t
+        else if (isVendedorTipoAcessoValue(t)) tipo_acesso = t
         else return NextResponse.json({ ok: false, error: 'tipo_acesso inválido' }, { status: 400 })
       }
       if (hasNivelKey) {
@@ -177,7 +177,7 @@ export async function POST(req: Request) {
           observacao: body?.observacao !== undefined ? emptyToNull(body.observacao) : undefined,
         } as any,
       })
-      await applyTipoNivelAcesso(id_vendedor_externo, tipo_acesso, nivel_acesso, hasTipoKey, hasNivelKey)
+      await applyTipoNivelAcesso(vendedorAccessKey(created), tipo_acesso, nivel_acesso, hasTipoKey, hasNivelKey)
       return NextResponse.json({ ok: true, id: created.id })
     }
 
@@ -219,13 +219,13 @@ export async function POST(req: Request) {
     const hasTipoKey = Object.prototype.hasOwnProperty.call(body, 'tipo_acesso')
     const hasNivelKey = Object.prototype.hasOwnProperty.call(body, 'nivel_acesso')
 
-    let tipo_acesso: 'VENDEDOR' | 'TELEVENDAS' | null | undefined
+    let tipo_acesso: VendedorTipoAcessoValue | null | undefined
     let nivel_acesso: 'SUPERVISOR' | 'ADMINISTRADOR' | 'OPERADOR' | null | undefined
 
     if (hasTipoKey) {
       const t = body.tipo_acesso
       if (t == null || t === '') tipo_acesso = null
-      else if (t === 'VENDEDOR' || t === 'TELEVENDAS') tipo_acesso = t
+      else if (isVendedorTipoAcessoValue(t)) tipo_acesso = t
       else return NextResponse.json({ ok: false, error: 'tipo_acesso inválido' }, { status: 400 })
     }
 
@@ -276,8 +276,20 @@ export async function POST(req: Request) {
       }
     }
 
-    if (id_vendedor_externo) {
-      await applyTipoNivelAcesso(id_vendedor_externo, tipo_acesso, nivel_acesso, hasTipoKey, hasNivelKey)
+    if (hasTipoKey || hasNivelKey) {
+      let accessKey: string | null = null
+      if (id) {
+        const row = await prisma.vendedor.findUnique({
+          where: { id },
+          select: { id: true, id_vendedor_externo: true },
+        })
+        if (row) accessKey = vendedorAccessKey(row)
+      } else if (id_vendedor_externo) {
+        accessKey = id_vendedor_externo
+      }
+      if (accessKey) {
+        await applyTipoNivelAcesso(accessKey, tipo_acesso, nivel_acesso, hasTipoKey, hasNivelKey)
+      }
     }
 
     if (password) {
@@ -337,28 +349,27 @@ export async function DELETE(req: Request) {
     }
 
     const ext = row.id_vendedor_externo?.trim() || null
-    if (ext) {
-      const isTargetAdmin = await prisma.vendedor_nivel_acesso.findUnique({
-        where: { id_vendedor_externo: ext },
-        select: { nivel: true },
+    const accessKey = vendedorAccessKey(row)
+    const isTargetAdmin = await prisma.vendedor_nivel_acesso.findUnique({
+      where: { id_vendedor_externo: accessKey },
+      select: { nivel: true },
+    })
+    if (isTargetAdmin?.nivel === NivelAcesso.ADMINISTRADOR) {
+      const adminCount = await prisma.vendedor_nivel_acesso.count({
+        where: { nivel: NivelAcesso.ADMINISTRADOR },
       })
-      if (isTargetAdmin?.nivel === NivelAcesso.ADMINISTRADOR) {
-        const adminCount = await prisma.vendedor_nivel_acesso.count({
-          where: { nivel: NivelAcesso.ADMINISTRADOR },
-        })
-        if (adminCount <= 1) {
-          return NextResponse.json(
-            { ok: false, error: 'Não é possível excluir o último administrador do sistema' },
-            { status: 400 },
-          )
-        }
+      if (adminCount <= 1) {
+        return NextResponse.json(
+          { ok: false, error: 'Não é possível excluir o último administrador do sistema' },
+          { status: 400 },
+        )
       }
     }
 
     await prisma.$transaction(async (tx) => {
+      await tx.vendedor_tipo_acesso.deleteMany({ where: { id_vendedor_externo: accessKey } })
+      await tx.vendedor_nivel_acesso.deleteMany({ where: { id_vendedor_externo: accessKey } })
       if (ext) {
-        await tx.vendedor_tipo_acesso.deleteMany({ where: { id_vendedor_externo: ext } })
-        await tx.vendedor_nivel_acesso.deleteMany({ where: { id_vendedor_externo: ext } })
         await tx.supervisor_vendor_links.deleteMany({ where: { vendedor_externo: ext } })
         await tx.vendedor.updateMany({
           where: { supervisor_responsavel_externo: ext },

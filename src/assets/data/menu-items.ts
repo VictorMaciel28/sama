@@ -42,6 +42,27 @@ export const MENU_ITEMS: MenuItemType[] = [
     ],
   },
   {
+    key: 'comercial',
+    label: 'Comercial',
+    icon: 'ri:briefcase-4-line',
+    children: [
+      {
+        key: 'comercial-orcamentos',
+        label: 'Orçamentos',
+        icon: 'ri:file-list-3-line',
+        url: '/comercial/orcamentos',
+        parentKey: 'comercial',
+      },
+      {
+        key: 'comercial-pedidos',
+        label: 'Pedidos de Venda',
+        icon: 'ri:shopping-bag-line',
+        url: '/comercial/pedidos',
+        parentKey: 'comercial',
+      },
+    ],
+  },
+  {
     key: 'administracao',
     label: 'Administração',
     icon: 'ri:settings-3-line',
