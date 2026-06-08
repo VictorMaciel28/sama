@@ -2422,7 +2422,7 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
                 </Col>
                 <Col lg={3} md={4} className="d-grid">
                   <Button variant="primary" onClick={addManualProposalItem}>
-                    Adicionar Produto sem cadastro
+                    Adicionar Produto
                   </Button>
                 </Col>
               </Row>
