@@ -320,7 +320,6 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
   } | null>(null)
   const [catalogDetailLoading, setCatalogDetailLoading] = useState(false)
   const [catalogDetailError, setCatalogDetailError] = useState<string | null>(null)
-  const [showCatalogListModal, setShowCatalogListModal] = useState(false)
   const [showQtyModal, setShowQtyModal] = useState(false)
   const [qtyModalProduct, setQtyModalProduct] = useState<CatalogItem | null>(null)
   const [qtyModalValue, setQtyModalValue] = useState<number>(1)
@@ -2375,9 +2374,6 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
                 </div>
               </div>
             )}
-            <div className="d-flex justify-content-end mt-2">
-              <Button size="sm" variant="outline-secondary" onClick={() => setShowCatalogListModal(true)}>Ver lista</Button>
-            </div>
 
             <div className="mt-3 border rounded p-3 bg-light">
               <div className="fw-semibold mb-2 small">Produto sem cadastro</div>
@@ -2426,7 +2422,7 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
                 </Col>
                 <Col lg={3} md={4} className="d-grid">
                   <Button variant="primary" onClick={addManualProposalItem}>
-                    Adicionar
+                    Adicionar Produto sem cadastro
                   </Button>
                 </Col>
               </Row>
@@ -2447,6 +2443,198 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
             >
               Histórico de produtos do cliente
             </Button>
+          </div>
+
+          <div className="mt-4">
+            <Form.Label className="fw-semibold mb-2">Produtos adicionados</Form.Label>
+            {itens.length === 0 ? (
+              <div className="text-muted small border rounded p-3">Nenhum produto adicionado.</div>
+            ) : (
+              <>
+                <div className="d-none d-md-block border rounded" style={{ overflowX: 'hidden', overflowY: 'auto', maxHeight: 420 }}>
+                  <Table hover size="sm" className="mb-0 pedido-line-items-table">
+                    <thead>
+                      <tr>
+                        <th style={{ width: '3%' }}>N°</th>
+                        <th className="col-nome" style={{ width: '26%' }}>Nome</th>
+                        <th style={{ width: '9%' }}>SKU</th>
+                        <th style={{ width: '14%' }}>Qtde</th>
+                        <th style={{ width: '6%' }}>Un.</th>
+                        <th style={{ width: '6%' }}>Est.</th>
+                        <th style={{ width: '10%' }}>Preço un.</th>
+                        <th style={{ width: '10%' }}>Total</th>
+                        <th style={{ width: '8%' }} className="text-end">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {itens.map((item, idx) => {
+                        const totalItem = item.quantidade * item.preco
+                        return (
+                          <tr key={item.id}>
+                            <td>{idx + 1}</td>
+                            <td className="col-nome">
+                              <div className="d-flex gap-2 align-items-center">
+                                {item.imagemUrl ? (
+                                  <img
+                                    src={item.imagemUrl}
+                                    alt="Produto"
+                                    style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6, cursor: 'pointer' }}
+                                    onClick={() => { setPreviewUrl(item.imagemUrl || null); setShowPreview(true) }}
+                                    className="flex-shrink-0"
+                                  />
+                                ) : null}
+                                <span>{item.nome}</span>
+                              </div>
+                            </td>
+                            <td className="small">{item.sku || '—'}</td>
+                            <td>
+                              <div className="d-flex gap-1 align-items-center justify-content-center">
+                                <Button variant="outline-secondary" size="sm" className="px-2 py-0" title="Diminuir 1" onClick={() => setQtyForLineItem(item.id, item.quantidade - 1)}>
+                                  <IconifyIcon icon="ri:subtract-line" />
+                                </Button>
+                                <Form.Control
+                                  size="sm"
+                                  type="number"
+                                  inputMode="numeric"
+                                  step={1}
+                                  min={0}
+                                  className="qty-input text-center"
+                                  style={{ width: 56 }}
+                                  value={item.quantidade}
+                                  onChange={(e) => {
+                                    const v = Number(e.target.value)
+                                    if (!Number.isFinite(v)) return
+                                    setQtyForLineItem(item.id, v)
+                                  }}
+                                />
+                                <Button variant="primary" size="sm" className="px-2 py-0" title="Aumentar 1" onClick={() => setQtyForLineItem(item.id, item.quantidade + 1)}>
+                                  <IconifyIcon icon="ri:add-line" />
+                                </Button>
+                              </div>
+                            </td>
+                            <td>{item.unidade}</td>
+                            <td>{isManualProposalSku(item.sku) ? '—' : (item.estoque ?? '—')}</td>
+                            <td className="small">
+                              {isManualProposalSku(item.sku) ? (
+                                <Form.Control
+                                  size="sm"
+                                  type="number"
+                                  min={0}
+                                  step={0.01}
+                                  value={item.preco}
+                                  onChange={(e) => updateLineItemPreco(item.id, Number(e.target.value))}
+                                />
+                              ) : (
+                                item.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+                              )}
+                            </td>
+                            <td className="small fw-semibold">
+                              {totalItem.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                            </td>
+                            <td className="text-end">
+                              <Button variant="outline-danger" size="sm" onClick={() => removeItem(item.id)} title="Remover">
+                                <IconifyIcon icon="ri:delete-bin-line" />
+                              </Button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </Table>
+                </div>
+                <div className="d-block d-md-none mt-2">
+                  {itens.map((item, idx) => {
+                    const totalItem = item.quantidade * item.preco
+                    return (
+                      <div key={item.id} className="border rounded p-2 mb-2">
+                        <div className="small text-muted">N° {idx + 1}</div>
+                        <Form.Group className="mt-1">
+                          <Form.Label className="mb-1">Nome</Form.Label>
+                          <div className="d-flex gap-2 align-items-center">
+                            {item.imagemUrl ? (
+                              <img
+                                src={item.imagemUrl}
+                                alt="Produto"
+                                style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 6, cursor: 'pointer' }}
+                                onClick={() => { setPreviewUrl(item.imagemUrl || null); setShowPreview(true) }}
+                                className="flex-shrink-0"
+                              />
+                            ) : null}
+                            <div className="flex-grow-1">{item.nome}</div>
+                          </div>
+                        </Form.Group>
+                        <Row className="g-2 mt-1">
+                          <Col xs={6}>
+                            <Form.Label className="mb-1">SKU</Form.Label>
+                            <div className="form-control-plaintext">{item.sku || '—'}</div>
+                          </Col>
+                          <Col xs={6}>
+                            <Form.Label className="mb-1">Estoque</Form.Label>
+                            <div className="form-control-plaintext">{isManualProposalSku(item.sku) ? '—' : (item.estoque ?? '—')}</div>
+                          </Col>
+                        </Row>
+                        <Row className="g-2 mt-1">
+                          <Col xs={12}>
+                            <Form.Label className="mb-1">Qtde</Form.Label>
+                            <div className="d-flex gap-1 align-items-center">
+                              <Button variant="outline-secondary" size="sm" title="Diminuir 1" onClick={() => setQtyForLineItem(item.id, item.quantidade - 1)}>
+                                <IconifyIcon icon="ri:subtract-line" />
+                              </Button>
+                              <Form.Control
+                                size="sm"
+                                type="number"
+                                inputMode="numeric"
+                                step={1}
+                                min={0}
+                                className="qty-input text-center"
+                                style={{ width: 64 }}
+                                value={item.quantidade}
+                                onChange={(e) => {
+                                  const v = Number(e.target.value)
+                                  if (!Number.isFinite(v)) return
+                                  setQtyForLineItem(item.id, v)
+                                }}
+                              />
+                              <Button variant="primary" size="sm" title="Aumentar 1" onClick={() => setQtyForLineItem(item.id, item.quantidade + 1)}>
+                                <IconifyIcon icon="ri:add-line" />
+                              </Button>
+                            </div>
+                          </Col>
+                          <Col xs={6}>
+                            <Form.Label className="mb-1">Unidade</Form.Label>
+                            <div className="form-control-plaintext">{item.unidade}</div>
+                          </Col>
+                          <Col xs={6}>
+                            <Form.Label className="mb-1">Preço un</Form.Label>
+                            {isManualProposalSku(item.sku) ? (
+                              <Form.Control
+                                size="sm"
+                                type="number"
+                                min={0}
+                                step={0.01}
+                                value={item.preco}
+                                onChange={(e) => updateLineItemPreco(item.id, Number(e.target.value))}
+                              />
+                            ) : (
+                              <div className="form-control-plaintext">{item.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</div>
+                            )}
+                          </Col>
+                          <Col xs={6}>
+                            <Form.Label className="mb-1">Total</Form.Label>
+                            <div className="form-control-plaintext">{totalItem.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</div>
+                          </Col>
+                        </Row>
+                        <div className="d-flex justify-content-end gap-2 mt-2">
+                          <Button variant="outline-danger" size="sm" onClick={() => removeItem(item.id)} title="Remover">
+                            <IconifyIcon icon="ri:delete-bin-line" />
+                          </Button>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
           </div>
           </Card.Body>
         </Card>
@@ -2842,230 +3030,6 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
           >
             Salvar
           </Button>
-        </Modal.Footer>
-      </Modal>
-
-      {/* Modal: Lista completa de itens (abre pela lista rolável) */}
-      <Modal
-        className="pedido-modal-align-page"
-        show={showCatalogListModal}
-        onHide={() => setShowCatalogListModal(false)}
-        centered
-        scrollable
-        dialogClassName="pedido-modal-wide"
-      >
-        <Modal.Header closeButton>
-          <Modal.Title>Lista de itens</Modal.Title>
-        </Modal.Header>
-        <Modal.Body className="pt-0">
-          <div className="d-none d-md-block" style={{ overflowX: 'hidden', overflowY: 'auto', maxHeight: 'min(72vh, 720px)' }}>
-            <Table hover size="sm" className="mb-0 pedido-line-items-table">
-              <thead>
-                <tr>
-                  <th style={{ width: '3%' }}>N°</th>
-                  <th className="col-nome" style={{ width: '26%' }}>Nome</th>
-                  <th style={{ width: '9%' }}>SKU</th>
-                  <th style={{ width: '14%' }}>Qtde</th>
-                  <th style={{ width: '6%' }}>Un.</th>
-                  <th style={{ width: '6%' }}>Est.</th>
-                  <th style={{ width: '10%' }}>Preço un.</th>
-                  <th style={{ width: '10%' }}>Total</th>
-                  <th style={{ width: '8%' }} className="text-end">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {itens.map((item, idx) => {
-                  const totalItem = item.quantidade * item.preco
-                  return (
-                    <tr key={item.id}>
-                      <td>{idx + 1}</td>
-                      <td className="col-nome">
-                        <div className="d-flex gap-2 align-items-center">
-                          {item.imagemUrl ? (
-                            <img
-                              src={item.imagemUrl}
-                              alt="Produto"
-                              style={{ width: 40, height: 40, objectFit: 'cover', borderRadius: 6, cursor: 'pointer' }}
-                              onClick={() => { setPreviewUrl(item.imagemUrl || null); setShowPreview(true) }}
-                              className="flex-shrink-0"
-                            />
-                          ) : null}
-                          <span>{item.nome}</span>
-                        </div>
-                      </td>
-                      <td className="small">{item.sku || '—'}</td>
-                      <td>
-                        <div className="d-flex gap-1 align-items-center justify-content-center">
-                          <Button
-                            variant="outline-secondary"
-                            size="sm"
-                            className="px-2 py-0"
-                            title="Diminuir 1"
-                            onClick={() => setQtyForLineItem(item.id, item.quantidade - 1)}
-                          >
-                            <IconifyIcon icon="ri:subtract-line" />
-                          </Button>
-                          <Form.Control
-                            size="sm"
-                            type="number"
-                            inputMode="numeric"
-                            step={1}
-                            min={0}
-                            className="qty-input text-center"
-                            style={{ width: 56 }}
-                            value={item.quantidade}
-                            onChange={(e) => {
-                              const v = Number(e.target.value)
-                              if (!Number.isFinite(v)) return
-                              setQtyForLineItem(item.id, v)
-                            }}
-                          />
-                          <Button
-                            variant="primary"
-                            size="sm"
-                            className="px-2 py-0"
-                            title="Aumentar 1"
-                            onClick={() => setQtyForLineItem(item.id, item.quantidade + 1)}
-                          >
-                            <IconifyIcon icon="ri:add-line" />
-                          </Button>
-                        </div>
-                      </td>
-                      <td>{item.unidade}</td>
-                      <td>{isManualProposalSku(item.sku) ? '—' : (item.estoque ?? '—')}</td>
-                      <td className="small">
-                        {isManualProposalSku(item.sku) ? (
-                          <Form.Control
-                            size="sm"
-                            type="number"
-                            min={0}
-                            step={0.01}
-                            value={item.preco}
-                            onChange={(e) => updateLineItemPreco(item.id, Number(e.target.value))}
-                          />
-                        ) : (
-                          item.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
-                        )}
-                      </td>
-                      <td className="small fw-semibold">
-                        {totalItem.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-                      </td>
-                      <td className="text-end">
-                        <Button variant="outline-danger" size="sm" onClick={() => removeItem(item.id)} title="Remover">
-                          <IconifyIcon icon="ri:delete-bin-line" />
-                        </Button>
-                      </td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </Table>
-          </div>
-          {/* Mobile (sm) - Itens empilhados dentro do modal */}
-          <div className="d-block d-md-none mt-3">
-            {itens.map((item, idx) => {
-              const totalItem = item.quantidade * item.preco
-              return (
-                <div key={item.id} className="border rounded p-2 mb-2">
-                  <div className="small text-muted">N° {idx + 1}</div>
-                  <Form.Group className="mt-1">
-                    <Form.Label className="mb-1">Nome</Form.Label>
-                    <div className="d-flex gap-2 align-items-center">
-                      {item.imagemUrl ? (
-                        <img
-                          src={item.imagemUrl}
-                          alt="Produto"
-                          style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 6, cursor: 'pointer' }}
-                          onClick={() => { setPreviewUrl(item.imagemUrl || null); setShowPreview(true) }}
-                          className="flex-shrink-0"
-                        />
-                      ) : null}
-                      <div className="flex-grow-1">{item.nome}</div>
-                    </div>
-                  </Form.Group>
-                  <Row className="g-2 mt-1">
-                    <Col xs={6}>
-                      <Form.Label className="mb-1">SKU</Form.Label>
-                      <div className="form-control-plaintext">{item.sku || ''}</div>
-                    </Col>
-                    <Col xs={6}>
-                      <Form.Label className="mb-1">Estoque</Form.Label>
-                      <div className="form-control-plaintext">{item.estoque ?? 0}</div>
-                    </Col>
-                  </Row>
-                  <Row className="g-2 mt-1">
-                    <Col xs={12}>
-                      <Form.Label className="mb-1">Qtde</Form.Label>
-                      <div className="d-flex gap-1 align-items-center">
-                        <Button
-                          variant="outline-secondary"
-                          size="sm"
-                          title="Diminuir 1"
-                          onClick={() => setQtyForLineItem(item.id, item.quantidade - 1)}
-                        >
-                          <IconifyIcon icon="ri:subtract-line" />
-                        </Button>
-                        <Form.Control
-                          size="sm"
-                          type="number"
-                          inputMode="numeric"
-                          step={1}
-                          min={0}
-                          className="qty-input text-center"
-                          style={{ width: 64 }}
-                          value={item.quantidade}
-                          onChange={(e) => {
-                            const v = Number(e.target.value)
-                            if (!Number.isFinite(v)) return
-                            setQtyForLineItem(item.id, v)
-                          }}
-                        />
-                        <Button
-                          variant="primary"
-                          size="sm"
-                          title="Aumentar 1"
-                          onClick={() => setQtyForLineItem(item.id, item.quantidade + 1)}
-                        >
-                          <IconifyIcon icon="ri:add-line" />
-                        </Button>
-                      </div>
-                    </Col>
-                    <Col xs={6}>
-                      <Form.Label className="mb-1">Unidade</Form.Label>
-                      <div className="form-control-plaintext">{item.unidade}</div>
-                    </Col>
-                    <Col xs={6}>
-                      <Form.Label className="mb-1">Preço un</Form.Label>
-                      {isManualProposalSku(item.sku) ? (
-                        <Form.Control
-                          size="sm"
-                          type="number"
-                          min={0}
-                          step={0.01}
-                          value={item.preco}
-                          onChange={(e) => updateLineItemPreco(item.id, Number(e.target.value))}
-                        />
-                      ) : (
-                        <div className="form-control-plaintext">{item.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</div>
-                      )}
-                    </Col>
-                    <Col xs={6}>
-                      <Form.Label className="mb-1">Total</Form.Label>
-                      <div className="form-control-plaintext">{totalItem.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</div>
-                    </Col>
-                  </Row>
-                  <div className="d-flex justify-content-end gap-2 mt-2">
-                    <Button variant="outline-danger" size="sm" onClick={() => removeItem(item.id)} title="Remover">
-                      <IconifyIcon icon="ri:delete-bin-line" />
-                    </Button>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        </Modal.Body>
-        <Modal.Footer>
-          <Button variant="secondary" onClick={() => setShowCatalogListModal(false)}>Fechar</Button>
         </Modal.Footer>
       </Modal>
 
