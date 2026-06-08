@@ -38,6 +38,54 @@ function formatEmpresaCnpj(cnpj: string) {
 
 type EmpresaOption = { id: string; nome: string; cnpj: string }
 
+function nextProposalSkuCode(items: Array<{ sku?: string }>): string {
+  let max = 0
+  for (const it of items) {
+    const m = String(it.sku || '').match(/^P(\d+)$/i)
+    if (m) max = Math.max(max, Number(m[1]))
+  }
+  return `P${String(max + 1).padStart(4, '0')}`
+}
+
+function isManualProposalSku(sku?: string) {
+  return /^P\d+$/i.test(String(sku || '').trim())
+}
+
+function mapItensToPayload(itens: ItemPedido[]) {
+  return itens
+    .map((it) => {
+      const nome = it.nome?.toString().trim()
+      const quantidade = Number(it.quantidade || 0)
+      const codigo = it.sku ? String(it.sku).trim() : null
+      const produtoId = Number(it.produtoId || 0)
+      if (!nome || quantidade <= 0) return null
+      if (produtoId > 0 || isManualProposalSku(codigo ?? undefined)) {
+        return {
+          produtoId: produtoId > 0 ? produtoId : null,
+          codigo,
+          nome,
+          quantidade,
+          unidade: it.unidade || 'UN',
+          preco: Number(it.preco || 0),
+        }
+      }
+      return null
+    })
+    .filter(Boolean)
+}
+
+type ItemPedido = {
+  id: number
+  nome: string
+  sku?: string
+  quantidade: number
+  unidade: string
+  preco: number
+  estoque?: number
+  produtoId?: number
+  imagemUrl?: string
+}
+
 async function fetchJsonCached(url: string, ttlMs = 4000) {
   const now = Date.now()
   const cached = requestCache.get(url)
@@ -235,7 +283,6 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
     })()
   }, [])
 
-  type ItemPedido = { id: number; nome: string; sku?: string; quantidade: number; unidade: string; preco: number; estoque?: number; produtoId?: number; imagemUrl?: string }
   const [itens, setItens] = useState<ItemPedido[]>([])
   // Keep original unit price so we can reapply markups without compounding
   type ItemPedidoWithOriginal = ItemPedido & { originalPreco?: number }
@@ -251,6 +298,10 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
   const [catalogPage, setCatalogPage] = useState(1)
   const [catalogTotalPages, setCatalogTotalPages] = useState(1)
   const [catalogQuery, setCatalogQuery] = useState('')
+  const [manualDescricao, setManualDescricao] = useState('')
+  const [manualQuantidade, setManualQuantidade] = useState(1)
+  const [manualUnidade, setManualUnidade] = useState('UN')
+  const [manualAddError, setManualAddError] = useState<string | null>(null)
   const [catalogSelected, setCatalogSelected] = useState<CatalogItem | null>(null)
   const [showCatalogDetail, setShowCatalogDetail] = useState(false)
   const catalogDebounceRef = useRef<any>(null)
@@ -507,6 +558,40 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
     setItens((arr) => {
       const nextId = arr.reduce((m, it) => Math.max(m, it.id), 0) + 1
       return [...arr, { id: nextId, nome: '', quantidade: 1, unidade: 'PC', preco: 0 }]
+    })
+  }
+
+  const addManualProposalItem = () => {
+    const nome = manualDescricao.trim()
+    const quantidade = roundQty(Number(manualQuantidade))
+    const unidade = manualUnidade.trim().slice(0, 20) || 'UN'
+    if (!nome) {
+      setManualAddError('Informe a descrição do produto')
+      return
+    }
+    if (quantidade <= 0) {
+      setManualAddError('Quantidade deve ser maior que zero')
+      return
+    }
+    setItens((arr) => {
+      const nextId = arr.reduce((m, it) => Math.max(m, it.id), 0) + 1
+      const sku = nextProposalSkuCode(arr)
+      return [...arr, { id: nextId, nome, sku, quantidade, unidade, preco: 0 }]
+    })
+    setManualDescricao('')
+    setManualQuantidade(1)
+    setManualUnidade('UN')
+    setManualAddError(null)
+  }
+
+  const updateLineItemPreco = (lineId: number, precoRaw: number) => {
+    const preco = Math.max(0, Number(precoRaw) || 0)
+    setItens((arr) => {
+      const idx = arr.findIndex((it) => it.id === lineId)
+      if (idx < 0) return arr
+      const next = [...arr]
+      next[idx] = { ...next[idx], preco }
+      return next
     })
   }
 
@@ -1401,14 +1486,9 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
         // remove top-level cnpj to avoid duplication when sending to Tiny via backend
         delete payloadProposal.cnpj
         // Include items in platform format so they are persisted with the proposal (not sent to Tiny yet)
-        if (itens && itens.length > 0) {
-          payloadProposal.itens = itens.map((it) => ({
-            produtoId: it.produtoId ?? null,
-            nome: it.nome,
-            quantidade: it.quantidade,
-            unidade: it.unidade,
-            preco: it.preco,
-          }))
+        const proposalItems = mapItensToPayload(itens)
+        if (proposalItems.length > 0) {
+          payloadProposal.itens = proposalItems
         }
         payloadProposal.endereco_entrega = {
           ...deliveryAddress,
@@ -1499,25 +1579,9 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
           }
         }),
       }
-      if (itens && itens.length > 0) {
-        const mappedItems = itens
-          .map((it) => {
-            const descricao = it.nome?.toString().trim()
-            const quantidade = Number(it.quantidade || 0)
-            const produtoId = Number(it.produtoId || 0)
-            if (!descricao || quantidade <= 0 || !produtoId) return null
-            return {
-              produtoId,
-              nome: descricao,
-              quantidade,
-              unidade: it.unidade || 'UN',
-              preco: Number(it.preco || 0),
-            }
-          })
-          .filter(Boolean)
-        if (mappedItems.length > 0) {
-          payloadToSend.itens = mappedItems
-        }
+      const mappedItems = mapItensToPayload(itens)
+      if (mappedItems.length > 0) {
+        payloadToSend.itens = mappedItems
       }
       await saveComercialPedido(payloadToSend)
       router.push('/comercial/pedidos')
@@ -2315,6 +2379,63 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
               <Button size="sm" variant="outline-secondary" onClick={() => setShowCatalogListModal(true)}>Ver lista</Button>
             </div>
 
+            <div className="mt-3 border rounded p-3 bg-light">
+              <div className="fw-semibold mb-2 small">Produto sem cadastro</div>
+              <Row className="g-2 align-items-end">
+                <Col lg={5} md={12}>
+                  <Form.Label className="small mb-1">Descrição</Form.Label>
+                  <Form.Control
+                    value={manualDescricao}
+                    onChange={(e) => {
+                      setManualDescricao(e.target.value)
+                      setManualAddError(null)
+                    }}
+                    placeholder="Descrição do produto"
+                    maxLength={255}
+                  />
+                </Col>
+                <Col lg={2} md={4}>
+                  <Form.Label className="small mb-1">Quantidade</Form.Label>
+                  <Form.Control
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={manualQuantidade}
+                    onChange={(e) => {
+                      setManualQuantidade(Number(e.target.value))
+                      setManualAddError(null)
+                    }}
+                  />
+                </Col>
+                <Col lg={2} md={4}>
+                  <Form.Label className="small mb-1">Unidade</Form.Label>
+                  <Form.Select
+                    value={manualUnidade}
+                    onChange={(e) => setManualUnidade(e.target.value)}
+                  >
+                    <option value="UN">UN</option>
+                    <option value="PC">PC</option>
+                    <option value="CX">CX</option>
+                    <option value="KG">KG</option>
+                    <option value="M">M</option>
+                    <option value="M2">M²</option>
+                    <option value="M3">M³</option>
+                    <option value="L">L</option>
+                    <option value="PAR">PAR</option>
+                  </Form.Select>
+                </Col>
+                <Col lg={3} md={4} className="d-grid">
+                  <Button variant="primary" onClick={addManualProposalItem}>
+                    Adicionar
+                  </Button>
+                </Col>
+              </Row>
+              {manualAddError ? <div className="text-danger small mt-2">{manualAddError}</div> : null}
+              <div className="text-muted small mt-2">
+                Gera SKU automático (P0001, P0002…) para itens incluídos na proposta e no pedido.
+              </div>
+            </div>
+
           </div>
 
           <div className="d-flex justify-content-start mt-3">
@@ -2811,9 +2932,20 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
                         </div>
                       </td>
                       <td>{item.unidade}</td>
-                      <td>{item.estoque ?? '—'}</td>
+                      <td>{isManualProposalSku(item.sku) ? '—' : (item.estoque ?? '—')}</td>
                       <td className="small">
-                        {item.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                        {isManualProposalSku(item.sku) ? (
+                          <Form.Control
+                            size="sm"
+                            type="number"
+                            min={0}
+                            step={0.01}
+                            value={item.preco}
+                            onChange={(e) => updateLineItemPreco(item.id, Number(e.target.value))}
+                          />
+                        ) : (
+                          item.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })
+                        )}
                       </td>
                       <td className="small fw-semibold">
                         {totalItem.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
@@ -2904,7 +3036,18 @@ export default function ComercialPedidoForm({ mode }: { mode: ComercialPedidoFor
                     </Col>
                     <Col xs={6}>
                       <Form.Label className="mb-1">Preço un</Form.Label>
-                      <div className="form-control-plaintext">{item.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</div>
+                      {isManualProposalSku(item.sku) ? (
+                        <Form.Control
+                          size="sm"
+                          type="number"
+                          min={0}
+                          step={0.01}
+                          value={item.preco}
+                          onChange={(e) => updateLineItemPreco(item.id, Number(e.target.value))}
+                        />
+                      ) : (
+                        <div className="form-control-plaintext">{item.preco.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}</div>
+                      )}
                     </Col>
                     <Col xs={6}>
                       <Form.Label className="mb-1">Total</Form.Label>

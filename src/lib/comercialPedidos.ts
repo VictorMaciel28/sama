@@ -89,9 +89,10 @@ export function normalizeComercialItems(items: unknown): Array<{
       if (!nome || quantidade <= 0) return null
       const produtoIdRaw = node?.produtoId ?? node?.produto_id ?? it?.produtoId ?? it?.produto_id
       const produtoIdNum = produtoIdRaw != null ? Number(produtoIdRaw) : null
+      const codigoRaw = node?.codigo ?? node?.sku ?? it?.codigo ?? it?.sku
       return {
-        produto_id: produtoIdNum && !Number.isNaN(produtoIdNum) ? produtoIdNum : null,
-        codigo: node?.codigo ? String(node.codigo) : null,
+        produto_id: produtoIdNum && !Number.isNaN(produtoIdNum) && produtoIdNum > 0 ? produtoIdNum : null,
+        codigo: codigoRaw != null && String(codigoRaw).trim() !== '' ? String(codigoRaw).trim() : null,
         nome,
         preco,
         quantidade,
